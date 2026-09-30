@@ -11,12 +11,13 @@ import {IHookObserver} from "frontier/interfaces/extensions/IHookObserver.sol";
  * @title IWthCorrector
  * @notice The correction extension: bound on a pool as its last fee calculator and as an after-swap
  * observer, it has the partner executor close the price gap the user's swap opened and splits the
- * executor's payment between the protocol treasury, the pool's LPs and the coin's fee recipient.
+ * executor's payment, in WETH or native ETH, between the protocol treasury, the pool's LPs and the
+ * coin's fee recipient.
  * @dev A correction runs inside the user's swap, under the hook's observer budget. The legs the
  * executor sends back through the pool are priced by `quoteFee`: a leg opposite to the user's swap,
  * exact-input, with a price limit strictly inside the band the swap opened pays the protocol floor
- * only. A failed correction, or one paid under `MIN_PAYMENT_WEI`, reverts as a whole, which the hook
- * swallows.
+ * only. A failed correction, or one paid under `MIN_PAYMENT_WEI` in WETH and native ETH together,
+ * reverts as a whole, which the hook swallows.
  */
 interface IWthCorrector is IFeeCalculator, IHookObserver {
     /**
@@ -39,6 +40,14 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
     event ExecutorSet(address indexed previousExecutor, address indexed executor);
 
     /**
+     * @notice Tokens held by the corrector were sent out by the factory owner.
+     * @param token The token recovered.
+     * @param to The recipient.
+     * @param amount The amount sent.
+     */
+    event TokensRecovered(address indexed token, address indexed to, uint256 amount);
+
+    /**
      * @notice A correction paid and its payment was split.
      * @param poolId The pool the user swapped on.
      * @param received The payment counted, WETH and native ETH together, in wei.
@@ -49,20 +58,6 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
     event CorrectionSettled(
         PoolId indexed poolId, uint256 received, uint256 protocolAmount, uint256 lpAmount, uint256 recipientAmount
     );
-
-    /**
-     * @notice A WETH transfer failed and its amount was credited for `claim`.
-     * @param to The intended payee.
-     * @param amount The amount credited, in wei.
-     */
-    event PayoutDeferred(address indexed to, uint256 amount);
-
-    /**
-     * @notice A deferred payout was claimed.
-     * @param to The payee.
-     * @param amount The amount paid, in wei.
-     */
-    event Claimed(address indexed to, uint256 amount);
 
     /// @notice Caller is not the BC token factory owner.
     error OnlyFactoryOwner();
@@ -85,20 +80,17 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
     /// @notice The executor's payment is below `MIN_PAYMENT_WEI`.
     error PaymentTooLow(uint256 received);
 
-    /// @notice `claim` is not available while a correction is in progress.
-    error CorrectionInProgress();
-
     /// @notice The executor call reverted.
     error ExecutorCallFailed();
 
     /// @notice The executor left the PoolManager delta snapshot changed.
     error DeltaSnapshotChanged();
 
+    /// @notice `recoverERC20` is not available while a correction is in progress.
+    error CorrectionInProgress();
+
     /// @notice Native ETH is accepted only while a correction is in progress.
     error EthNotAccepted();
-
-    /// @notice The account has no deferred payout.
-    error NothingToClaim();
 
     /// @notice WETH refused the transfer.
     error TransferFailed();
@@ -171,23 +163,18 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
     function executor() external view returns (address);
 
     /**
-     * @notice WETH owed to an account after a failed transfer.
-     * @param account The payee.
-     * @return The amount owed, in wei.
-     */
-    function claimable(address account) external view returns (uint256);
-
-    /**
      * @notice Sets the executor; the BC token factory owner only. The zero address pauses corrections.
      * @param newExecutor The executor to call.
      */
     function setExecutor(address newExecutor) external;
 
     /**
-     * @notice Pays an account's deferred payout; not available while a correction is in progress.
-     * @param to The payee.
+     * @notice Sends tokens held by the corrector to `to`; the BC token factory owner only, outside a correction.
+     * @param token The token to recover.
+     * @param to The recipient.
+     * @param amount The amount to send.
      */
-    function claim(address to) external;
+    function recoverERC20(address token, address to, uint256 amount) external;
 
     /**
      * @notice The price band of the correction in progress on `poolId`: the pool's post-swap price and its

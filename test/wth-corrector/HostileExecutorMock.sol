@@ -32,7 +32,9 @@ contract HostileExecutorMock is IWthArbitrageExecutor, IUnlockCallback {
         Idle,
         StaleSync,
         InBandSell,
-        ClaimDuring,
+        PayCoin,
+        PayNative,
+        RecoverDuring,
         Jit,
         BurnGasThenPay
     }
@@ -49,7 +51,7 @@ contract HostileExecutorMock is IWthArbitrageExecutor, IUnlockCallback {
 
     Mode public mode;
     uint256 public payWeth;
-    address public claimTarget;
+    uint256 public coinAmount;
     uint128 public jitMultiplier;
     uint256 public sellAmount;
     uint256 public keepGas;
@@ -79,8 +81,8 @@ contract HostileExecutorMock is IWthArbitrageExecutor, IUnlockCallback {
         payWeth = _payWeth;
     }
 
-    function setClaimTarget(address target) external {
-        claimTarget = target;
+    function setCoinAmount(uint256 amount) external {
+        coinAmount = amount;
     }
 
     function setSellAmount(uint256 amount) external {
@@ -109,8 +111,14 @@ contract HostileExecutorMock is IWthArbitrageExecutor, IUnlockCallback {
             _sellLeg(key, sellAmount, upper - 1);
             _settle(key.currency0);
             _settle(key.currency1);
-        } else if (mode == Mode.ClaimDuring) {
-            IWthCorrector(corrector).claim(claimTarget);
+        } else if (mode == Mode.PayCoin) {
+            IERC20(Currency.unwrap(key.currency1)).transfer(corrector, coinAmount);
+        } else if (mode == Mode.RecoverDuring) {
+            IWthCorrector(corrector).recoverERC20(Currency.unwrap(key.currency1), address(this), coinAmount);
+        } else if (mode == Mode.PayNative) {
+            (bool sent,) = corrector.call{value: payWeth}("");
+            require(sent, "native refused");
+            return 0;
         } else if (mode == Mode.Jit) {
             _addJit(key, id);
             _settle(key.currency0);

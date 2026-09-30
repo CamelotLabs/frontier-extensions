@@ -613,29 +613,22 @@ contract WthCorrectorTest is ExtensionCampaignBase {
         _assertSplit(t, r, m, 0);
     }
 
-    function test_payout_failedTransfer_isClaimable() public {
-        (uint256 t,,) = _baseline(USER_BUY);
+    function test_payout_failedTransfer_revertsTheCorrection() public {
+        uint256 coinOut = _probeBuy(USER_BUY);
+        _setSellLeg(coinOut / 4, WthExecutorMock.LimitMode.BandUpperMinus, 1);
         executor.setPay(WthExecutorMock.PayMode.Weth, PAYMENT);
-        uint256 protocolAmount = PAYMENT * PROTOCOL_BPS / 10_000;
-        vm.mockCallRevert(address(weth), abi.encodeCall(IWETH.transfer, (users.treasury, protocolAmount)), "");
+        vm.mockCallRevert(
+            address(weth), abi.encodeCall(IWETH.transfer, (users.treasury, PAYMENT * PROTOCOL_BPS / 10_000)), ""
+        );
+        (uint256 treasuryPaused,,) = _baseline(USER_BUY);
 
-        vm.expectEmit(true, false, false, true, address(corrector));
-        emit IWthCorrector.PayoutDeferred(users.treasury, protocolAmount);
-        _userBuy(USER_BUY);
+        vm.recordLogs();
+        assertGt(_userBuy(USER_BUY), 0, "the user swap completed");
         vm.clearMockedCalls();
-
-        assertEq(weth.balanceOf(users.treasury), t, "treasury not paid yet");
-        assertEq(corrector.claimable(users.treasury), protocolAmount, "credited");
-        assertEq(weth.balanceOf(address(corrector)), protocolAmount, "held for the claim");
-
-        vm.expectEmit(true, false, false, true, address(corrector));
-        emit IWthCorrector.Claimed(users.treasury, protocolAmount);
-        corrector.claim(users.treasury);
-        assertEq(weth.balanceOf(users.treasury), t + protocolAmount, "claimed");
-        assertEq(corrector.claimable(users.treasury), 0, "cleared");
-
-        vm.expectRevert(IWthCorrector.NothingToClaim.selector);
-        corrector.claim(users.treasury);
+        assertEq(_countLogs(address(corrector), IWthCorrector.CorrectionSettled.selector), 0, "nothing settled");
+        assertEq(hook.getCurrentFee(pid), BASE_FEE, "the leg was unwound");
+        assertEq(weth.balanceOf(users.treasury), treasuryPaused, "only the swap fee reached the treasury");
+        assertEq(weth.balanceOf(address(corrector)) + address(corrector).balance, 0, "nothing kept");
     }
 
     function testFuzz_payout_sharesSumToThePayment(uint256 payment) public {

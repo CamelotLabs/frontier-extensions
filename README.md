@@ -50,20 +50,22 @@ other venues, inside the same Uniswap unlock, and splits what the executor pays.
   hook's and its own deltas on both currencies and the synced currency: a changed digest, a reverting
   executor or a payment under `MIN_PAYMENT_WEI` reverts the correction, which the hook swallows, and
   every leg unwinds with it. The user's swap always completes.
-- **Payout.** The payment is counted in WETH and native ETH (`receive` accepts ETH only during a
-  correction). `PROTOCOL_SHARE_BPS` goes to the factory treasury (to the fee recipient when the
-  factory names none), `LP_SHARE_BPS` is donated to the pool's in-range liquidity in ETH (to the fee
-  recipient instead when the pool has none), the rest to the coin's `getFeeRecipient()`, all in WETH.
-  A refused transfer is credited to `claimable` and paid by `claim`, outside a correction only.
+- **Payout.** The payment is counted in the pool's quote currency, WETH and native ETH together
+  (`receive` accepts ETH only during a correction); under `MIN_PAYMENT_WEI` the correction reverts,
+  whatever else the executor sent. `PROTOCOL_SHARE_BPS` goes to the factory treasury (to the fee
+  recipient when the factory names none), `LP_SHARE_BPS` is donated to the pool's in-range liquidity
+  in ETH (to the fee recipient instead when the pool has none), the rest to the coin's
+  `getFeeRecipient()`, all in WETH. A refused WETH transfer reverts the correction.
 - **Gas.** The correction runs inside the hook's 600k observer budget, shared with the pool's other
   observers. With the test executor a full correction (one in-band leg through the hook, one leg on
   a plain pool, payout with donation) costs about 292k: roughly 90k in the corrector, 103k for the
   hook leg, 49k for the plain leg. `onAfterSwap` returns without calling the executor when
   `gasleft()` is under `MIN_CORRECTION_GAS`, and keeps `TAIL_RESERVE` (120k) back from the executor
   call for the snapshot check and the payout.
-- **Owner lever.** `setExecutor(address)`, callable by the `BCTokenFactory` owner, with an event and
-  no delay. The zero address pauses corrections on every bound pool. It is the only lever; the
-  shares, `CREATOR_BPS`, `MIN_CORRECTION_GAS` and `MIN_PAYMENT_WEI` are constructor immutables.
+- **Owner levers.** `setExecutor(address)`, callable by the `BCTokenFactory` owner, with an event and
+  no delay: the zero address pauses corrections on every bound pool. `recoverERC20(token, to, amount)`,
+  same gate, sends out stray tokens (the corrector holds nothing between transactions). The shares,
+  `CREATOR_BPS`, `MIN_CORRECTION_GAS` and `MIN_PAYMENT_WEI` are constructor immutables.
 
 Tests: [`test/wth-corrector/`](test/wth-corrector/) (the corrector through real swaps on the real
 hook, a scripted executor arbitraging against a plain v4 pool, a hostile executor whose every

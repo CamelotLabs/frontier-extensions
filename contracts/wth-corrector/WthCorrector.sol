@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -42,6 +43,7 @@ import {IWthCorrector} from "./IWthCorrector.sol";
  */
 contract WthCorrector is IWthCorrector, HookGated {
     using PoolIdLibrary for PoolKey;
+    using SafeERC20 for IERC20;
     using StateLibrary for IPoolManager;
 
     /// @notice Role bit of the fee-calculator binding.
@@ -98,9 +100,6 @@ contract WthCorrector is IWthCorrector, HookGated {
     /// @notice The partner executor; the zero address pauses corrections.
     address public executor;
 
-    /// @notice WETH owed per account after a failed transfer.
-    mapping(address account => uint256 amount) public claimable;
-
     /// @dev Per-pool bindings; `roles == 0` marks an unbound pool.
     mapping(PoolId poolId => PoolBinding binding) internal _bindings;
 
@@ -150,13 +149,12 @@ contract WthCorrector is IWthCorrector, HookGated {
     }
 
     /// @inheritdoc IWthCorrector
-    function claim(address to) external {
+    function recoverERC20(address token, address to, uint256 amount) external {
+        if (msg.sender != IBCTokenFactory(BC_TOKEN_FACTORY).owner()) revert OnlyFactoryOwner();
+        if (token == address(0) || to == address(0)) revert InvalidZeroAddress();
         if (_tload(LOCK_TSLOT) != 0) revert CorrectionInProgress();
-        uint256 amount = claimable[to];
-        if (amount == 0) revert NothingToClaim();
-        claimable[to] = 0;
-        if (!IWETH(WETH).transfer(to, amount)) revert TransferFailed();
-        emit Claimed(to, amount);
+        IERC20(token).safeTransfer(to, amount);
+        emit TokensRecovered(token, to, amount);
     }
 
     /// @inheritdoc IFeeCalculator
@@ -250,6 +248,17 @@ contract WthCorrector is IWthCorrector, HookGated {
         uint256 wethBefore = IERC20(WETH).balanceOf(address(this));
         uint256 ethBefore = address(this).balance;
 
+        bool ok = _callExecutor(target, binding);
+        _tstore(WINDOW_TSLOT, 0);
+        if (!ok) revert ExecutorCallFailed();
+        if (_deltaDigest(msg.sender, binding.coin) != digest) revert DeltaSnapshotChanged();
+
+        nativeReceived = address(this).balance - ethBefore;
+        received = IERC20(WETH).balanceOf(address(this)) - wethBefore + nativeReceived;
+    }
+
+    /// @notice Calls the executor, keeping `TAIL_RESERVE` back; the returndata is never copied into memory.
+    function _callExecutor(address target, PoolBinding memory binding) internal returns (bool ok) {
         bytes memory data = abi.encodeCall(
             IWthArbitrageExecutor.executeArbitrage,
             (
@@ -260,20 +269,12 @@ contract WthCorrector is IWthCorrector, HookGated {
                 })
             )
         );
-        bool ok;
         uint256 reserve = TAIL_RESERVE;
-        // Raw call so the executor's returndata is never copied into memory; the reserve stays here.
         assembly ("memory-safe") {
             let left := gas()
             let budget := mul(gt(left, reserve), sub(left, reserve))
             ok := call(budget, target, 0, add(data, 32), mload(data), 0, 0)
         }
-        _tstore(WINDOW_TSLOT, 0);
-        if (!ok) revert ExecutorCallFailed();
-        if (_deltaDigest(msg.sender, binding.coin) != digest) revert DeltaSnapshotChanged();
-
-        nativeReceived = address(this).balance - ethBefore;
-        received = IERC20(WETH).balanceOf(address(this)) - wethBefore + nativeReceived;
     }
 
     /// @notice Opens the correction window: the band between the post-swap price and the pre-swap
@@ -373,14 +374,10 @@ contract WthCorrector is IWthCorrector, HookGated {
         emit CorrectionSettled(poolId, received, protocolAmount, lpAmount, recipientAmount);
     }
 
-    /// @notice Transfers WETH, crediting `claimable` instead when the transfer fails.
+    /// @notice Transfers WETH.
     function _pay(address to, uint256 amount) internal {
         if (amount == 0) return;
-        try IWETH(WETH).transfer(to, amount) returns (bool ok) {
-            if (ok) return;
-        } catch {}
-        claimable[to] += amount;
-        emit PayoutDeferred(to, amount);
+        if (!IWETH(WETH).transfer(to, amount)) revert TransferFailed();
     }
 
     /// @notice The hooked native-ETH/coin pool key.

@@ -142,28 +142,76 @@ contract WthCorrectorHostileTest is ExtensionCampaignBase {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Claim under the lock
+    // Payment token and recovery
     // ---------------------------------------------------------------------------------------------
 
-    function test_claim_revertsDuringACorrection() public {
-        uint256 payment = 1e15;
-        uint256 protocolAmount = payment * PROTOCOL_BPS / 10_000;
-        executor.set(HostileExecutorMock.Mode.Idle, payment);
-        vm.mockCallRevert(address(weth), abi.encodeCall(IWETH.transfer, (users.treasury, protocolAmount)), "");
-        _swapEthForCoin(address(wCoin), users.buyerTwo, USER_BUY);
-        vm.clearMockedCalls();
-        assertEq(corrector.claimable(users.treasury), protocolAmount, "deferred");
+    function test_coinOnlyPayment_isBelowTheMinimum() public {
+        executor.set(HostileExecutorMock.Mode.PayCoin, 0);
+        executor.setCoinAmount(1000 ether);
+        uint256 coinsBefore = wCoin.balanceOf(address(executor));
+        vm.recordLogs();
+        uint256 got = _swapEthForCoin(address(wCoin), users.buyerTwo, USER_BUY);
+        assertGt(got, 0, "the user swap completed");
+        assertEq(_countLogs(address(corrector), IWthCorrector.CorrectionSettled.selector), 0, "correction reverted");
+        assertEq(wCoin.balanceOf(address(corrector)), 0, "the coin came back with the revert");
+        assertEq(wCoin.balanceOf(address(executor)), coinsBefore, "executor coins");
+    }
 
-        executor.setClaimTarget(users.treasury);
-        executor.set(HostileExecutorMock.Mode.ClaimDuring, payment);
+    function test_wethPaymentWithStrayCoin_settlesAndIsRecoverable() public {
+        executor.set(HostileExecutorMock.Mode.PayCoin, 1e15);
+        executor.setCoinAmount(1000 ether);
+        vm.recordLogs();
+        _swapEthForCoin(address(wCoin), users.buyerTwo, USER_BUY);
+        assertEq(_countLogs(address(corrector), IWthCorrector.CorrectionSettled.selector), 1, "settled on the WETH");
+        assertEq(wCoin.balanceOf(address(corrector)), 1000 ether, "the coin stays");
+        assertEq(weth.balanceOf(address(corrector)), 0, "the WETH was split");
+
+        vm.expectEmit(true, true, false, true, address(corrector));
+        emit IWthCorrector.TokensRecovered(address(wCoin), users.treasury, 1000 ether);
+        vm.prank(users.owner);
+        corrector.recoverERC20(address(wCoin), users.treasury, 1000 ether);
+        assertEq(wCoin.balanceOf(users.treasury), 1000 ether, "recovered");
+        assertEq(wCoin.balanceOf(address(corrector)), 0, "nothing left");
+    }
+
+    function test_recoverERC20_recoversStrayWeth() public {
+        vm.deal(address(this), 1 ether);
+        weth.deposit{value: 1 ether}();
+        weth.transfer(address(corrector), 1 ether);
+        vm.prank(users.owner);
+        corrector.recoverERC20(address(weth), users.treasury, 1 ether);
+        assertEq(weth.balanceOf(users.treasury), 1 ether, "recovered");
+    }
+
+    function test_RevertWhen_recoverERC20NotFromTheFactoryOwner() public {
+        vm.expectRevert(IWthCorrector.OnlyFactoryOwner.selector);
+        corrector.recoverERC20(address(wCoin), address(this), 1);
+    }
+
+    function test_RevertWhen_recoverERC20WithZeroAddresses() public {
+        vm.startPrank(users.owner);
+        vm.expectRevert(IWthCorrector.InvalidZeroAddress.selector);
+        corrector.recoverERC20(address(0), users.treasury, 1);
+        vm.expectRevert(IWthCorrector.InvalidZeroAddress.selector);
+        corrector.recoverERC20(address(wCoin), address(0), 1);
+        vm.stopPrank();
+    }
+
+    function test_recoverERC20_revertsDuringACorrection() public {
+        vm.prank(address(executor));
+        wCoin.transfer(address(corrector), 1000 ether);
+        factory.setOwner(address(executor));
+
+        executor.set(HostileExecutorMock.Mode.RecoverDuring, 1e15);
+        executor.setCoinAmount(1000 ether);
         vm.recordLogs();
         _swapEthForCoin(address(wCoin), users.buyerTwo, USER_BUY);
         assertEq(_countLogs(address(corrector), IWthCorrector.CorrectionSettled.selector), 0, "correction reverted");
-        assertEq(corrector.claimable(users.treasury), protocolAmount, "claim untouched");
-        assertEq(weth.balanceOf(address(corrector)), protocolAmount, "held for the claim, nothing stranded");
+        assertEq(wCoin.balanceOf(address(corrector)), 1000 ether, "still held");
 
-        corrector.claim(users.treasury);
-        assertEq(weth.balanceOf(address(corrector)), 0, "claimable outside a correction");
+        vm.prank(address(executor));
+        corrector.recoverERC20(address(wCoin), users.treasury, 1000 ether);
+        assertEq(wCoin.balanceOf(users.treasury), 1000 ether, "recoverable outside a correction");
     }
 
     // ---------------------------------------------------------------------------------------------
