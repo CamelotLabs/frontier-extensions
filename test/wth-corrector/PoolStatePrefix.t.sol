@@ -17,7 +17,7 @@ import {WthCorrector} from "contracts/wth-corrector/WthCorrector.sol";
 /// @dev Exposes the raw `PoolState` prefix read so it can be checked against the typed decode.
 contract WthCorrectorHarness is WthCorrector {
     constructor(address factory, IPoolManager poolManager, address weth)
-        WthCorrector(factory, poolManager, weth, 0, 0, 0, 0)
+        WthCorrector(factory, poolManager, weth, 0, 0, 0, 0, 0)
     {}
 
     function referenceTick(address hook, PoolId poolId) external view returns (int24) {

@@ -15,7 +15,8 @@ import {IHookObserver} from "frontier/interfaces/extensions/IHookObserver.sol";
  * @dev A correction runs inside the user's swap, under the hook's observer budget. The legs the
  * executor sends back through the pool are priced by `quoteFee`: a leg opposite to the user's swap,
  * exact-input, with a price limit strictly inside the band the swap opened pays the protocol floor
- * only. A failed correction reverts as a whole, which the hook swallows.
+ * only. A failed correction, or one paid under `MIN_PAYMENT_WEI`, reverts as a whole, which the hook
+ * swallows.
  */
 interface IWthCorrector is IFeeCalculator, IHookObserver {
     /**
@@ -78,8 +79,14 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
     /// @notice The pool already bound this role.
     error RoleAlreadyBound();
 
-    /// @notice The hook did not answer `getPoolState` with a readable prefix.
+    /// @notice The hook did not answer `getPoolState` with the expected prefix.
     error PoolStateUnavailable();
+
+    /// @notice The executor's payment is below `MIN_PAYMENT_WEI`.
+    error PaymentTooLow(uint256 received);
+
+    /// @notice `claim` is not available while a correction is in progress.
+    error CorrectionInProgress();
 
     /// @notice The executor call reverted.
     error ExecutorCallFailed();
@@ -146,6 +153,18 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
     function MIN_CORRECTION_GAS() external view returns (uint256);
 
     /**
+     * @notice Payment below which a correction reverts and its legs unwind, in wei.
+     * @return The minimum, in wei.
+     */
+    function MIN_PAYMENT_WEI() external view returns (uint256);
+
+    /**
+     * @notice Gas kept back from the executor call for the snapshot check and the payout.
+     * @return The reserve, in gas.
+     */
+    function TAIL_RESERVE() external view returns (uint256);
+
+    /**
      * @notice The partner executor called after every swap on a bound pool; the zero address pauses corrections.
      * @return The executor.
      */
@@ -165,7 +184,7 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
     function setExecutor(address newExecutor) external;
 
     /**
-     * @notice Pays an account's deferred payout.
+     * @notice Pays an account's deferred payout; not available while a correction is in progress.
      * @param to The payee.
      */
     function claim(address to) external;

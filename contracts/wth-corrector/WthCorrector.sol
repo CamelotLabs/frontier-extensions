@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {CurrencyReserves} from "@uniswap/v4-core/src/libraries/CurrencyReserves.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {NonzeroDeltaCount} from "@uniswap/v4-core/src/libraries/NonzeroDeltaCount.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
@@ -55,6 +56,9 @@ contract WthCorrector is IWthCorrector, HookGated {
     /// @notice Minimum `getPoolState` returndata: the offset word plus the `PoolState` head words 0-3.
     uint256 private constant POOL_STATE_PREFIX_BYTES = 5 * 32;
 
+    /// @notice Gas kept back from the executor call for the snapshot check and the payout.
+    uint256 public constant TAIL_RESERVE = 120_000;
+
     /// @dev Transient self-lock, set for the whole correction; `receive` accepts ETH only while it is set.
     bytes32 private constant LOCK_TSLOT = keccak256("WthCorrector.lock");
 
@@ -88,6 +92,9 @@ contract WthCorrector is IWthCorrector, HookGated {
     /// @notice Gas left below which `onAfterSwap` returns without calling the executor.
     uint256 public immutable MIN_CORRECTION_GAS;
 
+    /// @notice Payment below which a correction reverts, in wei.
+    uint256 public immutable MIN_PAYMENT_WEI;
+
     /// @notice The partner executor; the zero address pauses corrections.
     address public executor;
 
@@ -105,6 +112,7 @@ contract WthCorrector is IWthCorrector, HookGated {
      * @param lpShareBps Share of every payment donated to the pool's LPs, in bps.
      * @param creatorBps The `creatorBps` named in the profit split handed to the executor.
      * @param minCorrectionGas Gas left below which a correction is skipped.
+     * @param minPaymentWei Payment below which a correction reverts.
      */
     constructor(
         address factory,
@@ -113,7 +121,8 @@ contract WthCorrector is IWthCorrector, HookGated {
         uint16 protocolShareBps,
         uint16 lpShareBps,
         uint16 creatorBps,
-        uint256 minCorrectionGas
+        uint256 minCorrectionGas,
+        uint256 minPaymentWei
     ) HookGated(factory) {
         if (factory == address(0) || address(poolManager) == address(0) || weth == address(0)) {
             revert InvalidZeroAddress();
@@ -125,6 +134,7 @@ contract WthCorrector is IWthCorrector, HookGated {
         LP_SHARE_BPS = lpShareBps;
         CREATOR_BPS = creatorBps;
         MIN_CORRECTION_GAS = minCorrectionGas;
+        MIN_PAYMENT_WEI = minPaymentWei;
     }
 
     /// @notice Accepts native ETH (the executor's payment, WETH unwrapping) only during a correction.
@@ -141,6 +151,7 @@ contract WthCorrector is IWthCorrector, HookGated {
 
     /// @inheritdoc IWthCorrector
     function claim(address to) external {
+        if (_tload(LOCK_TSLOT) != 0) revert CorrectionInProgress();
         uint256 amount = claimable[to];
         if (amount == 0) revert NothingToClaim();
         claimable[to] = 0;
@@ -183,6 +194,7 @@ contract WthCorrector is IWthCorrector, HookGated {
         PoolBinding memory binding = _bindings[poolId];
         _openWindow(poolId, delta.amount0() < 0);
         (uint256 received, uint256 nativeReceived) = _correct(target, binding);
+        if (received < MIN_PAYMENT_WEI) revert PaymentTooLow(received);
         if (received != 0) _payout(poolId, binding, received, nativeReceived);
 
         _tstore(LOCK_TSLOT, 0);
@@ -206,7 +218,7 @@ contract WthCorrector is IWthCorrector, HookGated {
     }
 
     /// @notice Binds one role on a pool: hook-gated, write-once per role, the pool key rebuilt from the
-    /// config's tick spacing must hash to `poolId`.
+    /// config's tick spacing must hash to `poolId`, and the hook's `PoolState` prefix must name the coin.
     function _bind(PoolId poolId, bytes calldata config, uint8 role) internal {
         address hook = hookOf[poolId];
         if (hook == address(0)) hook = address(_registerPool(poolId));
@@ -220,6 +232,8 @@ contract WthCorrector is IWthCorrector, HookGated {
         if (coin == address(0) || PoolId.unwrap(_poolKey(coin, tickSpacing, hook).toId()) != PoolId.unwrap(poolId)) {
             revert InvalidPoolConfig();
         }
+        (uint256 coinWord, uint256 registeredWord,) = _poolStatePrefix(hook, poolId);
+        if (coinWord != uint256(uint160(coin)) || registeredWord != 1) revert PoolStateUnavailable();
 
         binding.coin = coin;
         binding.tickSpacing = tickSpacing;
@@ -247,9 +261,12 @@ contract WthCorrector is IWthCorrector, HookGated {
             )
         );
         bool ok;
-        // Raw call so the executor's returndata is never copied into memory.
+        uint256 reserve = TAIL_RESERVE;
+        // Raw call so the executor's returndata is never copied into memory; the reserve stays here.
         assembly ("memory-safe") {
-            ok := call(gas(), target, 0, add(data, 32), mload(data), 0, 0)
+            let left := gas()
+            let budget := mul(gt(left, reserve), sub(left, reserve))
+            ok := call(budget, target, 0, add(data, 32), mload(data), 0, 0)
         }
         _tstore(WINDOW_TSLOT, 0);
         if (!ok) revert ExecutorCallFailed();
@@ -281,31 +298,42 @@ contract WthCorrector is IWthCorrector, HookGated {
     }
 
     /// @notice Reads the hook's pre-swap reference tick off the `PoolState` prefix (head word 3).
-    /// @dev Raw staticcall with a bounded copy: the typed decode would copy the pool's extension arrays.
     function _referenceTick(address hook, PoolId poolId) internal view returns (int24 tick) {
+        (,, int256 word) = _poolStatePrefix(hook, poolId);
+        tick = int24(word);
+    }
+
+    /// @notice Reads the `PoolState` head words 0 (`coin`), 1 (`registered`) and 3 (`referenceTick`) raw.
+    /// @dev Raw staticcall with a bounded copy: the typed decode would copy the pool's extension arrays.
+    function _poolStatePrefix(address hook, PoolId poolId)
+        internal
+        view
+        returns (uint256 coinWord, uint256 registeredWord, int256 tickWord)
+    {
         bytes memory data = abi.encodeCall(IFactoryHook.getPoolState, (poolId));
         uint256 size = POOL_STATE_PREFIX_BYTES;
         bool ok;
-        int256 word;
         assembly ("memory-safe") {
             let out := mload(0x40)
             ok := staticcall(gas(), hook, add(data, 32), mload(data), out, size)
             ok := and(ok, iszero(lt(returndatasize(), size)))
-            word := mload(add(out, 0x80))
+            coinWord := mload(add(out, 0x20))
+            registeredWord := mload(add(out, 0x40))
+            tickWord := mload(add(out, 0x80))
         }
         if (!ok) revert PoolStateUnavailable();
-        tick = int24(word);
     }
 
-    /// @notice Digest of the PoolManager deltas a correction must leave untouched: the nonzero delta
-    /// count and the hook's and this contract's deltas on both currencies.
+    /// @notice Digest of the PoolManager transient state a correction must leave untouched: the nonzero
+    /// delta count, the hook's and this contract's deltas on both currencies, and the synced currency.
     function _deltaDigest(address hook, address coin) internal view returns (bytes32) {
-        bytes32[] memory slots = new bytes32[](5);
+        bytes32[] memory slots = new bytes32[](6);
         slots[0] = NonzeroDeltaCount.NONZERO_DELTA_COUNT_SLOT;
         slots[1] = _deltaSlot(hook, address(0));
         slots[2] = _deltaSlot(hook, coin);
         slots[3] = _deltaSlot(address(this), address(0));
         slots[4] = _deltaSlot(address(this), coin);
+        slots[5] = CurrencyReserves.CURRENCY_SLOT;
         return keccak256(abi.encode(POOL_MANAGER.exttload(slots)));
     }
 
@@ -317,10 +345,11 @@ contract WthCorrector is IWthCorrector, HookGated {
     /// @notice Splits a payment: the protocol share to the treasury, the LP share donated to the pool in
     /// native ETH, the rest to the coin's fee recipient; WETH for every transfer.
     /// @dev The LP share falls to the fee recipient when the pool has no in-range liquidity, since
-    /// `donate` reverts there.
+    /// `donate` reverts there; so does the protocol share when the factory names no treasury.
     function _payout(PoolId poolId, PoolBinding memory binding, uint256 received, uint256 nativeHeld) internal {
         address recipient = IBCToken(binding.coin).getFeeRecipient();
         address treasury = IBCTokenFactory(BC_TOKEN_FACTORY).treasury();
+        if (treasury == address(0)) treasury = recipient;
 
         uint256 protocolAmount = received * PROTOCOL_SHARE_BPS / MAX_BPS;
         uint256 lpAmount = received * LP_SHARE_BPS / MAX_BPS;

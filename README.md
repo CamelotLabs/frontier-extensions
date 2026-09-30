@@ -27,13 +27,16 @@ FOUNDRY_PROFILE=fork forge test     # live: against Robinhood Chain (in CI: the 
 
 ### WthCorrector
 
-One singleton bound on a pool **in both roles**: last fee calculator of the chain and after-swap
+One singleton bound on a pool **in both roles**: last fee calculator of the chain and last after-swap
 observer. After a user swap it has a partner executor close the price gap the swap opened against
 other venues, inside the same Uniswap unlock, and splits what the executor pays.
 
 - **Binding.** `onRegisterCalculator` and `onRegisterObserver`, hook-gated through the kit's
   `HookGated`, write-once per role. The config of each role is one abi-encoded `int24` tick spacing;
-  the pool key `(ETH, coin, dynamic fee, tickSpacing, hook)` rebuilt from it must hash to the pool id.
+  the pool key `(ETH, coin, dynamic fee, tickSpacing, hook)` rebuilt from it must hash to the pool id,
+  and the hook's `getPoolState` prefix must name that coin as registered. List the corrector last in
+  both lists: a calculator after it could reprice the legs, an observer before it that swaps would
+  move the band.
 - **Flow.** `onAfterSwap` opens a transient window carrying the band of the user's swap (its
   post-swap price and its pre-swap tick moved one tick inside) and calls
   `executor.executeArbitrage(poolKey, address(0), ProfitSplit(this, 0, CREATOR_BPS, 0))`
@@ -43,27 +46,30 @@ other venues, inside the same Uniswap unlock, and splits what the executor pays.
   other leg pays the pool's normal fee. `currentBand(poolId)` exposes the band while the window is
   open.
 - **Unwinding.** The executor's own legs notify the corrector again; a transient self-lock returns
-  them at once. Around the call the corrector digests the PoolManager's nonzero-delta count and the
-  hook's and its own deltas on both currencies: a changed digest or a reverting executor reverts the
-  correction, which the hook swallows, and every leg unwinds with it. The user's swap always
-  completes.
+  them at once. Around the call the corrector digests the PoolManager's nonzero-delta count, the
+  hook's and its own deltas on both currencies and the synced currency: a changed digest, a reverting
+  executor or a payment under `MIN_PAYMENT_WEI` reverts the correction, which the hook swallows, and
+  every leg unwinds with it. The user's swap always completes.
 - **Payout.** The payment is counted in WETH and native ETH (`receive` accepts ETH only during a
-  correction). `PROTOCOL_SHARE_BPS` goes to the factory treasury, `LP_SHARE_BPS` is donated to the
-  pool's in-range liquidity in ETH (to the fee recipient instead when the pool has none), the rest to
-  the coin's `getFeeRecipient()`, all in WETH. A refused transfer is credited to `claimable` and paid
-  by `claim`.
+  correction). `PROTOCOL_SHARE_BPS` goes to the factory treasury (to the fee recipient when the
+  factory names none), `LP_SHARE_BPS` is donated to the pool's in-range liquidity in ETH (to the fee
+  recipient instead when the pool has none), the rest to the coin's `getFeeRecipient()`, all in WETH.
+  A refused transfer is credited to `claimable` and paid by `claim`, outside a correction only.
 - **Gas.** The correction runs inside the hook's 600k observer budget, shared with the pool's other
   observers. With the test executor a full correction (one in-band leg through the hook, one leg on
   a plain pool, payout with donation) costs about 292k: roughly 90k in the corrector, 103k for the
   hook leg, 49k for the plain leg. `onAfterSwap` returns without calling the executor when
-  `gasleft()` is under `MIN_CORRECTION_GAS`.
+  `gasleft()` is under `MIN_CORRECTION_GAS`, and keeps `TAIL_RESERVE` (120k) back from the executor
+  call for the snapshot check and the payout.
 - **Owner lever.** `setExecutor(address)`, callable by the `BCTokenFactory` owner, with an event and
   no delay. The zero address pauses corrections on every bound pool. It is the only lever; the
-  shares, `CREATOR_BPS` and `MIN_CORRECTION_GAS` are constructor immutables.
+  shares, `CREATOR_BPS`, `MIN_CORRECTION_GAS` and `MIN_PAYMENT_WEI` are constructor immutables.
 
 Tests: [`test/wth-corrector/`](test/wth-corrector/) (the corrector through real swaps on the real
-hook, a scripted executor arbitraging against a plain v4 pool, and the `getPoolState` prefix read
-checked against the typed decode); [`test/fork/`](test/fork/) checks that prefix on the live hook.
+hook, a scripted executor arbitraging against a plain v4 pool, a hostile executor whose every
+misbehaviour must stay contained, and the `getPoolState` prefix read checked against the typed
+decode); [`test/fork/`](test/fork/) checks that prefix on the live hook and simulates corrections on
+a coin launched through the live factory.
 
 ## Build and test
 
