@@ -59,7 +59,8 @@ LPs and the coin's fee recipient.
   pool's quote currency, WETH and native ETH together (`receive` accepts ETH only during a
   correction); under `MIN_PAYMENT_WEI` the correction reverts, whatever else the executor sent. The
   pool's `lpShareBps` of it is donated to the pool's in-range liquidity in ETH (to the fee recipient
-  instead when the pool has none), the rest goes to the coin's `getFeeRecipient()` in WETH; the
+  instead when the pool has none, or when the swapper's router left a currency synced on the
+  PoolManager), the rest goes to the coin's `getFeeRecipient()` in WETH; the
   coin creator sets that split at launch, LPs never under 25 %. A refused WETH transfer reverts the
   correction. `CorrectionSettled(poolId, received, lpAmount, recipientAmount)` records every split;
   `ExecutorSet` and `TokensRecovered` the owner's actions.
@@ -72,7 +73,8 @@ LPs and the coin's fee recipient.
 - **Owner levers.** `setExecutor(address)`, callable by the `BCTokenFactory` owner, with an event and
   no delay: the zero address pauses corrections on every bound pool. `recoverERC20(token, to, amount)`,
   same gate, sends out stray tokens (the corrector holds nothing between transactions).
-  `MIN_CORRECTION_GAS` and `MIN_PAYMENT_WEI` are constructor immutables.
+  `MIN_CORRECTION_GAS` (above `TAIL_RESERVE`) and `MIN_PAYMENT_WEI` (nonzero) are constructor
+  immutables.
 
 Tests: [`test/wth-corrector/`](test/wth-corrector/) (the corrector through real swaps on the real
 hook, a scripted executor arbitraging against a plain v4 pool, a hostile executor whose every

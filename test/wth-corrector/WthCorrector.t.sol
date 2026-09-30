@@ -28,6 +28,7 @@ import {IWthArbitrageExecutor} from "contracts/wth-corrector/IWthArbitrageExecut
 import {IWthCorrector} from "contracts/wth-corrector/IWthCorrector.sol";
 import {WthCorrector} from "contracts/wth-corrector/WthCorrector.sol";
 
+import {PresyncRouterMock} from "./PresyncRouterMock.sol";
 import {WthExecutorMock} from "./WthExecutorMock.sol";
 
 /// @dev Runs against Frontier's real `FactoryHook` (from the kit's lib/factory-hook) on a local Uniswap v4
@@ -55,7 +56,7 @@ contract WthCorrectorTest is ExtensionCampaignBase {
 
     function setUp() public override {
         super.setUp();
-        corrector = new WthCorrector(address(factory), poolManager, address(weth), MIN_GAS, 0);
+        corrector = new WthCorrector(address(factory), poolManager, address(weth), MIN_GAS, 1);
         (wCoin, pid) = _deployBound(address(corrector), _config(TICK_SPACING, LP_BPS), _config(TICK_SPACING, LP_BPS));
         key = _poolKey(address(wCoin));
         recipient = wCoin.getFeeRecipient();
@@ -64,6 +65,7 @@ contract WthCorrectorTest is ExtensionCampaignBase {
         vm.prank(users.owner);
         corrector.setExecutor(address(executor));
         vm.deal(address(executor), 100 ether);
+        executor.setPay(WthExecutorMock.PayMode.Weth, 1);
 
         uint256 held = wCoin.balanceOf(users.buyerOne);
         vm.startPrank(users.buyerOne);
@@ -204,19 +206,31 @@ contract WthCorrectorTest is ExtensionCampaignBase {
 
     function test_constructor_rejectsZeroAddresses() public {
         vm.expectRevert(IWthCorrector.InvalidZeroAddress.selector);
-        new WthCorrector(address(0), poolManager, address(weth), 0, 0);
+        new WthCorrector(address(0), poolManager, address(weth), MIN_GAS, 1);
         vm.expectRevert(IWthCorrector.InvalidZeroAddress.selector);
-        new WthCorrector(address(factory), IPoolManager(address(0)), address(weth), 0, 0);
+        new WthCorrector(address(factory), IPoolManager(address(0)), address(weth), MIN_GAS, 1);
         vm.expectRevert(IWthCorrector.InvalidZeroAddress.selector);
-        new WthCorrector(address(factory), poolManager, address(0), 0, 0);
+        new WthCorrector(address(factory), poolManager, address(0), MIN_GAS, 1);
     }
 
     function test_constructor_storesTheGates() public {
-        WthCorrector c = new WthCorrector(address(factory), poolManager, address(weth), 1, 2);
+        uint256 minGas = corrector.TAIL_RESERVE() + 1;
+        WthCorrector c = new WthCorrector(address(factory), poolManager, address(weth), minGas, 2);
         assertEq(c.CREATOR_BPS(), 8000, "creator bps");
         assertEq(c.MIN_LP_SHARE_BPS(), 2500, "min lp share");
-        assertEq(c.MIN_CORRECTION_GAS(), 1, "min gas");
+        assertEq(c.MIN_CORRECTION_GAS(), minGas, "min gas");
         assertEq(c.MIN_PAYMENT_WEI(), 2, "min payment");
+    }
+
+    function test_RevertWhen_minCorrectionGasIsNotAboveTheTailReserve() public {
+        uint256 reserve = corrector.TAIL_RESERVE();
+        vm.expectRevert(IWthCorrector.InvalidGates.selector);
+        new WthCorrector(address(factory), poolManager, address(weth), reserve, 1);
+    }
+
+    function test_RevertWhen_minPaymentIsZero() public {
+        vm.expectRevert(IWthCorrector.InvalidGates.selector);
+        new WthCorrector(address(factory), poolManager, address(weth), MIN_GAS, 0);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -385,7 +399,7 @@ contract WthCorrectorTest is ExtensionCampaignBase {
     }
 
     function test_minCorrectionGas_skipsTheCall() public {
-        WthCorrector greedy = new WthCorrector(address(factory), poolManager, address(weth), 1_000_000, 0);
+        WthCorrector greedy = new WthCorrector(address(factory), poolManager, address(weth), 1_000_000, 1);
         (MockBCToken other,) =
             _deployBound(address(greedy), _config(TICK_SPACING, LP_BPS), _config(TICK_SPACING, LP_BPS));
         vm.prank(users.owner);
@@ -615,11 +629,42 @@ contract WthCorrectorTest is ExtensionCampaignBase {
         _assertSplit(t, r, m, lpAmount);
     }
 
-    function test_payment_none_settlesNothing() public {
+    function test_payment_none_revertsTheCorrection() public {
+        executor.setPay(WthExecutorMock.PayMode.None, 0);
         vm.recordLogs();
-        _userBuy(USER_BUY);
-        assertEq(_rec(executor.REC_CALLS()), 1, "called");
+        assertGt(_userBuy(USER_BUY), 0, "the user swap completed");
+        assertEq(_rec(executor.REC_CALLS()), 0, "the executor frame was rolled back");
         assertEq(_countLogs(address(corrector), IWthCorrector.CorrectionSettled.selector), 0, "no settlement");
+    }
+
+    /// @dev A router that keeps a currency synced across the Frontier hop: the LP share goes to the
+    /// recipient and the router's settle stays intact.
+    function test_payout_pendingSync_paysTheLpShareToTheRecipient() public {
+        uint256 coinIn = 1_000_000 ether;
+        PresyncRouterMock router = new PresyncRouterMock(poolManager);
+        vm.prank(users.buyerOne);
+        wCoin.transfer(address(router), coinIn);
+        executor.setPay(WthExecutorMock.PayMode.Weth, PAYMENT);
+
+        uint256 snap = vm.snapshot();
+        vm.prank(users.owner);
+        corrector.setExecutor(address(0));
+        router.roundTrip(plainKey, key, coinIn);
+        uint256 recipientPaused = weth.balanceOf(recipient);
+        uint256 managerPaused = address(poolManager).balance;
+        uint256 coinsPaused = wCoin.balanceOf(address(router));
+        vm.revertTo(snap);
+
+        vm.recordLogs();
+        vm.expectEmit(true, false, false, true, address(corrector));
+        emit IWthCorrector.CorrectionSettled(pid, PAYMENT, 0, PAYMENT);
+        router.roundTrip(plainKey, key, coinIn);
+
+        assertEq(wCoin.balanceOf(address(router)), coinsPaused, "the round trip completed as when paused");
+        assertEq(_countLogs(address(poolManager), IPoolManager.Donate.selector), 0, "no donation");
+        assertEq(weth.balanceOf(recipient) - recipientPaused, PAYMENT, "the whole payment to the recipient");
+        assertEq(address(poolManager).balance, managerPaused, "nothing settled into the manager");
+        assertEq(weth.balanceOf(address(corrector)) + address(corrector).balance, 0, "nothing kept");
     }
 
     function test_payout_zeroLiquidity_paysTheLpShareToTheRecipient() public {

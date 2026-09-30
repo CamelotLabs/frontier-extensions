@@ -67,6 +67,9 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
     /// @notice The LP share is not between `MIN_LP_SHARE_BPS` and 10 000 bps.
     error InvalidShares();
 
+    /// @notice `minCorrectionGas` is not above `TAIL_RESERVE`, or `minPaymentWei` is zero.
+    error InvalidGates();
+
     /// @notice The register payload is not `(int24 tickSpacing, uint16 lpShareBps)`, the resulting pool key does not
     /// hash to the pool id, or the two roles disagree.
     error InvalidPoolConfig();

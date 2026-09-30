@@ -117,6 +117,7 @@ contract WthCorrector is IWthCorrector, HookGated {
         if (factory == address(0) || address(poolManager) == address(0) || weth == address(0)) {
             revert InvalidZeroAddress();
         }
+        if (minCorrectionGas <= TAIL_RESERVE || minPaymentWei == 0) revert InvalidGates();
         POOL_MANAGER = poolManager;
         WETH = weth;
         MIN_CORRECTION_GAS = minCorrectionGas;
@@ -337,12 +338,17 @@ contract WthCorrector is IWthCorrector, HookGated {
     /// @notice Splits a payment: the pool's LP share donated to the pool in native ETH, the rest to the
     /// coin's fee recipient in WETH.
     /// @dev The LP share falls to the fee recipient when the pool has no in-range liquidity, since
-    /// `donate` reverts there.
+    /// `donate` reverts there, or when a currency is pending sync on the PoolManager, since a native
+    /// settle reverts there.
     function _payout(PoolId poolId, PoolBinding memory binding, uint256 received, uint256 nativeHeld) internal {
         address recipient = IBCToken(binding.coin).getFeeRecipient();
 
         uint256 lpAmount = received * binding.lpShareBps / MAX_BPS;
-        if (lpAmount != 0 && POOL_MANAGER.getLiquidity(poolId) == 0) lpAmount = 0;
+        if (
+            lpAmount != 0
+                && (POOL_MANAGER.getLiquidity(poolId) == 0
+                    || POOL_MANAGER.exttload(CurrencyReserves.CURRENCY_SLOT) != 0)
+        ) lpAmount = 0;
 
         if (lpAmount != 0) {
             if (nativeHeld < lpAmount) {
@@ -350,7 +356,6 @@ contract WthCorrector is IWthCorrector, HookGated {
                 nativeHeld = lpAmount;
             }
             nativeHeld -= lpAmount;
-            POOL_MANAGER.sync(CurrencyLibrary.ADDRESS_ZERO);
             POOL_MANAGER.settle{value: lpAmount}();
             POOL_MANAGER.donate(_poolKey(binding.coin, binding.tickSpacing, msg.sender), lpAmount, 0, "");
         }
