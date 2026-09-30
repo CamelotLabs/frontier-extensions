@@ -10,7 +10,7 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
  */
 interface IWthArbitrageExecutor {
     /**
-     * @notice The profit shares the caller names, in bps.
+     * @notice The profit shares the caller names, in bps; the three shares sum to 8000.
      * @param creator The address paid `creatorBps`.
      * @param traderBps The trader's share.
      * @param creatorBps The creator's share.

@@ -29,17 +29,21 @@ FOUNDRY_PROFILE=fork forge test     # live: against Robinhood Chain (in CI: the 
 
 One singleton bound on a pool **in both roles**: last fee calculator of the chain and last after-swap
 observer. After a user swap it has a partner executor close the price gap the swap opened against
-other venues, inside the same Uniswap unlock, and splits what the executor pays.
+other venues, inside the same Uniswap unlock, and splits what the executor pays between the pool's
+LPs and the coin's fee recipient.
 
 - **Binding.** `onRegisterCalculator` and `onRegisterObserver`, hook-gated through the kit's
-  `HookGated`, write-once per role. The config of each role is one abi-encoded `int24` tick spacing;
-  the pool key `(ETH, coin, dynamic fee, tickSpacing, hook)` rebuilt from it must hash to the pool id,
-  and the hook's `getPoolState` prefix must name that coin as registered. List the corrector last in
-  both lists: a calculator after it could reprice the legs, an observer before it that swaps would
-  move the band.
+  `HookGated`, write-once per role. The config of each role is `abi.encode(int24 tickSpacing,
+  uint16 lpShareBps)`, the same for both roles: the pool key `(ETH, coin, dynamic fee, tickSpacing,
+  hook)` rebuilt from it must hash to the pool id, the hook's `getPoolState` prefix must name that
+  coin as registered, and `lpShareBps` must lie between `MIN_LP_SHARE_BPS` (2500) and 10 000. There
+  is no default: an empty or malformed config fails the deploy. List the corrector last in both
+  lists: a calculator after it could reprice the legs, an observer before it that swaps would move
+  the band.
 - **Flow.** `onAfterSwap` opens a transient window carrying the band of the user's swap (its
   post-swap price and its pre-swap tick moved one tick inside) and calls
-  `executor.executeArbitrage(poolKey, address(0), ProfitSplit(this, 0, CREATOR_BPS, 0))`
+  `executor.executeArbitrage(poolKey, address(0), ProfitSplit(this, 0, CREATOR_BPS, 0))`, with
+  `CREATOR_BPS` the constant 8000, the sum the executor requires of the split's three shares
   ([`IWthArbitrageExecutor`](contracts/wth-corrector/IWthArbitrageExecutor.sol), selector `0xd4641322`).
   `quoteFee` prices the legs the executor sends back through the pool: opposite to the user's swap,
   exact-input, with a price limit strictly inside the band, a leg pays the protocol floor only; any
@@ -50,12 +54,15 @@ other venues, inside the same Uniswap unlock, and splits what the executor pays.
   hook's and its own deltas on both currencies and the synced currency: a changed digest, a reverting
   executor or a payment under `MIN_PAYMENT_WEI` reverts the correction, which the hook swallows, and
   every leg unwinds with it. The user's swap always completes.
-- **Payout.** The payment is counted in the pool's quote currency, WETH and native ETH together
-  (`receive` accepts ETH only during a correction); under `MIN_PAYMENT_WEI` the correction reverts,
-  whatever else the executor sent. `PROTOCOL_SHARE_BPS` goes to the factory treasury (to the fee
-  recipient when the factory names none), `LP_SHARE_BPS` is donated to the pool's in-range liquidity
-  in ETH (to the fee recipient instead when the pool has none), the rest to the coin's
-  `getFeeRecipient()`, all in WETH. A refused WETH transfer reverts the correction.
+- **Payout.** The corrector receives `CREATOR_BPS` (8000) of the executor's realized profit, the
+  executor's interface reserving the other 2000 bps, and takes nothing for the protocol. The payment is counted in the
+  pool's quote currency, WETH and native ETH together (`receive` accepts ETH only during a
+  correction); under `MIN_PAYMENT_WEI` the correction reverts, whatever else the executor sent. The
+  pool's `lpShareBps` of it is donated to the pool's in-range liquidity in ETH (to the fee recipient
+  instead when the pool has none), the rest goes to the coin's `getFeeRecipient()` in WETH; the
+  coin creator sets that split at launch, LPs never under 25 %. A refused WETH transfer reverts the
+  correction. `CorrectionSettled(poolId, received, lpAmount, recipientAmount)` records every split;
+  `ExecutorSet` and `TokensRecovered` the owner's actions.
 - **Gas.** The correction runs inside the hook's 600k observer budget, shared with the pool's other
   observers. With the test executor a full correction (one in-band leg through the hook, one leg on
   a plain pool, payout with donation) costs about 292k: roughly 90k in the corrector, 103k for the
@@ -64,8 +71,8 @@ other venues, inside the same Uniswap unlock, and splits what the executor pays.
   call for the snapshot check and the payout.
 - **Owner levers.** `setExecutor(address)`, callable by the `BCTokenFactory` owner, with an event and
   no delay: the zero address pauses corrections on every bound pool. `recoverERC20(token, to, amount)`,
-  same gate, sends out stray tokens (the corrector holds nothing between transactions). The shares,
-  `CREATOR_BPS`, `MIN_CORRECTION_GAS` and `MIN_PAYMENT_WEI` are constructor immutables.
+  same gate, sends out stray tokens (the corrector holds nothing between transactions).
+  `MIN_CORRECTION_GAS` and `MIN_PAYMENT_WEI` are constructor immutables.
 
 Tests: [`test/wth-corrector/`](test/wth-corrector/) (the corrector through real swaps on the real
 hook, a scripted executor arbitraging against a plain v4 pool, a hostile executor whose every

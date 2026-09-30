@@ -29,7 +29,6 @@ contract WthCorrectorHostileTest is ExtensionCampaignBase {
 
     uint24 internal constant BASE_FEE = 3000;
     uint24 internal constant FLOOR_FEE = 300;
-    uint16 internal constant PROTOCOL_BPS = 2000;
     uint16 internal constant LP_BPS = 3000;
     uint256 internal constant MIN_GAS = 250_000;
     uint256 internal constant MIN_PAYMENT = 1e12;
@@ -43,12 +42,10 @@ contract WthCorrectorHostileTest is ExtensionCampaignBase {
 
     function setUp() public override {
         super.setUp();
-        corrector = new WthCorrector(
-            address(factory), poolManager, address(weth), PROTOCOL_BPS, LP_BPS, 8000, MIN_GAS, MIN_PAYMENT
-        );
+        corrector = new WthCorrector(address(factory), poolManager, address(weth), MIN_GAS, MIN_PAYMENT);
         (wCoin, pid) = _deployGraduated(
-            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), abi.encode(TICK_SPACING))
-                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, abi.encode(TICK_SPACING)),
+            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), abi.encode(TICK_SPACING, LP_BPS))
+                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, abi.encode(TICK_SPACING, LP_BPS)),
             false
         );
         key = _poolKey(address(wCoin));
@@ -258,8 +255,8 @@ contract WthCorrectorHostileTest is ExtensionCampaignBase {
 
     function test_windowIsPerPool() public {
         (, PoolId otherPid) = _deployGraduated(
-            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), abi.encode(TICK_SPACING))
-                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, abi.encode(TICK_SPACING)),
+            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), abi.encode(TICK_SPACING, LP_BPS))
+                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, abi.encode(TICK_SPACING, LP_BPS)),
             false
         );
         executor.set(HostileExecutorMock.Mode.Idle, MIN_PAYMENT);

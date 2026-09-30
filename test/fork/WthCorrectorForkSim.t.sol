@@ -205,7 +205,7 @@ contract WthCorrectorForkSim is Test {
     address internal constant FACTORY = 0xe3A826C056e578c240D362BF4C2fa53E5c0c17a5;
     int24 internal constant SPACING = 60;
     uint24 internal constant SECONDARY_FEE = 3000;
-    bytes32 internal constant SETTLED_TOPIC = keccak256("CorrectionSettled(bytes32,uint256,uint256,uint256,uint256)");
+    bytes32 internal constant SETTLED_TOPIC = keccak256("CorrectionSettled(bytes32,uint256,uint256,uint256)");
 
     IBCTokenFactory internal factory = IBCTokenFactory(FACTORY);
     ILiquidityManagerView internal lm;
@@ -229,7 +229,7 @@ contract WthCorrectorForkSim is Test {
         router = new PoolSwapTest(pm);
         liqRouter = new PoolModifyLiquidityTest(pm);
 
-        corrector = new WthCorrector(FACTORY, pm, factory.WETH(), 2000, 3000, 8000, 250_000, 1e12);
+        corrector = new WthCorrector(FACTORY, pm, factory.WETH(), 250_000, 1e12);
         executor = new ForkArbExecutor(pm, address(corrector), 17);
         vm.prank(factory.owner());
         corrector.setExecutor(address(executor));
@@ -277,7 +277,6 @@ contract WthCorrectorForkSim is Test {
         uint256 profit;
         uint256 execGas;
         uint256 received;
-        uint256 protocolAmount;
         uint256 lpAmount;
         uint256 recipientAmount;
     }
@@ -294,7 +293,7 @@ contract WthCorrectorForkSim is Test {
         executor.reset();
         vm.recordLogs();
         r.gasOn = _swapGas(size, buy, false);
-        (r.received, r.protocolAmount, r.lpAmount, r.recipientAmount) = _settled();
+        (r.received, r.lpAmount, r.recipientAmount) = _settled();
         r.gapAfter = _gapBps();
         r.calls = executor.rec(0);
         r.legs = executor.rec(1);
@@ -311,7 +310,7 @@ contract WthCorrectorForkSim is Test {
         console2.log("  executor calls / legs / exec gas", r.calls, r.legs, r.execGas);
         console2.log("  gap before -> after (sqrt price, ppm)", r.gapBefore, r.gapAfter);
         console2.log("  profit wei / paid to corrector", r.profit, r.received);
-        console2.log("  split protocol / lp / recipient", r.protocolAmount, r.lpAmount, r.recipientAmount);
+        console2.log("  split lp / recipient", r.lpAmount, r.recipientAmount);
     }
 
     function _swapGas(uint256 size, bool buy, bool paused) internal returns (uint256 used) {
@@ -349,15 +348,11 @@ contract WthCorrectorForkSim is Test {
         return gap * 1_000_000 / s2;
     }
 
-    function _settled()
-        internal
-        returns (uint256 received, uint256 protocolAmount, uint256 lpAmount, uint256 recipientAmount)
-    {
+    function _settled() internal returns (uint256 received, uint256 lpAmount, uint256 recipientAmount) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter == address(corrector) && logs[i].topics[0] == SETTLED_TOPIC) {
-                (received, protocolAmount, lpAmount, recipientAmount) =
-                    abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
+                (received, lpAmount, recipientAmount) = abi.decode(logs[i].data, (uint256, uint256, uint256));
             }
         }
     }
@@ -382,7 +377,7 @@ contract WthCorrectorForkSim is Test {
         (,,, uint80 creationFee) = factory.feeConfig();
         vm.deal(address(this), creationFee);
 
-        bytes memory bind = abi.encode(SPACING);
+        bytes memory bind = abi.encode(SPACING, uint16(5000));
         IFactoryHook.HookConfigV2 memory config = HookPayload.withFee(HookPayload.DEFAULT_FIXED_FEE);
         config = HookPayload.addCalculator(config, address(corrector), bind);
         config = HookPayload.addObserver(config, address(corrector), 1, bind);

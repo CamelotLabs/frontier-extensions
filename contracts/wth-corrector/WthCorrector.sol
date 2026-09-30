@@ -35,7 +35,7 @@ import {IWthCorrector} from "./IWthCorrector.sol";
  * @notice Official correction extension: one singleton bound on a pool as its last fee calculator
  * and as an after-swap observer. After a user swap it calls the partner executor inside the same
  * unlock, prices the executor's in-band legs at the protocol floor, and splits the payment it
- * receives in WETH or native ETH.
+ * receives in WETH or native ETH between the pool's LPs and the coin's fee recipient.
  * @dev The band and the user's direction live in transient storage for the duration of the
  * executor call; a self-lock makes the nested notifications of the executor's own legs return at
  * once. The PoolManager delta snapshot taken around the call must be unchanged on return, else the
@@ -54,6 +54,12 @@ contract WthCorrector is IWthCorrector, HookGated {
 
     /// @notice Basis-point denominator.
     uint16 private constant MAX_BPS = 10_000;
+
+    /// @notice The `creatorBps` named in the profit split handed to the executor; the split's three shares sum to it.
+    uint16 public constant CREATOR_BPS = 8000;
+
+    /// @notice Lowest LP share a pool may bind, in bps.
+    uint16 public constant MIN_LP_SHARE_BPS = 2500;
 
     /// @notice Minimum `getPoolState` returndata: the offset word plus the `PoolState` head words 0-3.
     uint256 private constant POOL_STATE_PREFIX_BYTES = 5 * 32;
@@ -82,15 +88,6 @@ contract WthCorrector is IWthCorrector, HookGated {
     /// @notice The canonical WETH, the payout asset.
     address public immutable WETH;
 
-    /// @notice Share of every payment paid to the protocol treasury, in bps.
-    uint16 public immutable PROTOCOL_SHARE_BPS;
-
-    /// @notice Share of every payment donated to the pool's LPs, in bps.
-    uint16 public immutable LP_SHARE_BPS;
-
-    /// @notice The `creatorBps` named in the profit split handed to the executor.
-    uint16 public immutable CREATOR_BPS;
-
     /// @notice Gas left below which `onAfterSwap` returns without calling the executor.
     uint256 public immutable MIN_CORRECTION_GAS;
 
@@ -107,9 +104,6 @@ contract WthCorrector is IWthCorrector, HookGated {
      * @param factory The Frontier `BCTokenFactory`; its owner sets the executor.
      * @param poolManager The Uniswap V4 pool manager.
      * @param weth The canonical WETH.
-     * @param protocolShareBps Share of every payment paid to the protocol treasury, in bps.
-     * @param lpShareBps Share of every payment donated to the pool's LPs, in bps.
-     * @param creatorBps The `creatorBps` named in the profit split handed to the executor.
      * @param minCorrectionGas Gas left below which a correction is skipped.
      * @param minPaymentWei Payment below which a correction reverts.
      */
@@ -117,21 +111,14 @@ contract WthCorrector is IWthCorrector, HookGated {
         address factory,
         IPoolManager poolManager,
         address weth,
-        uint16 protocolShareBps,
-        uint16 lpShareBps,
-        uint16 creatorBps,
         uint256 minCorrectionGas,
         uint256 minPaymentWei
     ) HookGated(factory) {
         if (factory == address(0) || address(poolManager) == address(0) || weth == address(0)) {
             revert InvalidZeroAddress();
         }
-        if (uint256(protocolShareBps) + lpShareBps > MAX_BPS || creatorBps > MAX_BPS) revert InvalidShares();
         POOL_MANAGER = poolManager;
         WETH = weth;
-        PROTOCOL_SHARE_BPS = protocolShareBps;
-        LP_SHARE_BPS = lpShareBps;
-        CREATOR_BPS = creatorBps;
         MIN_CORRECTION_GAS = minCorrectionGas;
         MIN_PAYMENT_WEI = minPaymentWei;
     }
@@ -216,7 +203,8 @@ contract WthCorrector is IWthCorrector, HookGated {
     }
 
     /// @notice Binds one role on a pool: hook-gated, write-once per role, the pool key rebuilt from the
-    /// config's tick spacing must hash to `poolId`, and the hook's `PoolState` prefix must name the coin.
+    /// config's tick spacing must hash to `poolId`, the hook's `PoolState` prefix must name the coin,
+    /// and both roles must carry the same config.
     function _bind(PoolId poolId, bytes calldata config, uint8 role) internal {
         address hook = hookOf[poolId];
         if (hook == address(0)) hook = address(_registerPool(poolId));
@@ -224,8 +212,10 @@ contract WthCorrector is IWthCorrector, HookGated {
 
         PoolBinding storage binding = _bindings[poolId];
         if (binding.roles & role != 0) revert RoleAlreadyBound();
-        if (config.length != 32) revert InvalidPoolConfig();
-        int24 tickSpacing = abi.decode(config, (int24));
+        if (config.length != 64) revert InvalidPoolConfig();
+        (int24 tickSpacing, uint16 lpShareBps) = abi.decode(config, (int24, uint16));
+        if (lpShareBps < MIN_LP_SHARE_BPS || lpShareBps > MAX_BPS) revert InvalidShares();
+        if (binding.roles != 0 && binding.lpShareBps != lpShareBps) revert InvalidPoolConfig();
         address coin = IExtensionHost(hook).poolCoin(poolId);
         if (coin == address(0) || PoolId.unwrap(_poolKey(coin, tickSpacing, hook).toId()) != PoolId.unwrap(poolId)) {
             revert InvalidPoolConfig();
@@ -235,6 +225,7 @@ contract WthCorrector is IWthCorrector, HookGated {
 
         binding.coin = coin;
         binding.tickSpacing = tickSpacing;
+        binding.lpShareBps = lpShareBps;
         binding.roles |= role;
     }
 
@@ -343,17 +334,14 @@ contract WthCorrector is IWthCorrector, HookGated {
         return keccak256(abi.encode(target, currency));
     }
 
-    /// @notice Splits a payment: the protocol share to the treasury, the LP share donated to the pool in
-    /// native ETH, the rest to the coin's fee recipient; WETH for every transfer.
+    /// @notice Splits a payment: the pool's LP share donated to the pool in native ETH, the rest to the
+    /// coin's fee recipient in WETH.
     /// @dev The LP share falls to the fee recipient when the pool has no in-range liquidity, since
-    /// `donate` reverts there; so does the protocol share when the factory names no treasury.
+    /// `donate` reverts there.
     function _payout(PoolId poolId, PoolBinding memory binding, uint256 received, uint256 nativeHeld) internal {
         address recipient = IBCToken(binding.coin).getFeeRecipient();
-        address treasury = IBCTokenFactory(BC_TOKEN_FACTORY).treasury();
-        if (treasury == address(0)) treasury = recipient;
 
-        uint256 protocolAmount = received * PROTOCOL_SHARE_BPS / MAX_BPS;
-        uint256 lpAmount = received * LP_SHARE_BPS / MAX_BPS;
+        uint256 lpAmount = received * binding.lpShareBps / MAX_BPS;
         if (lpAmount != 0 && POOL_MANAGER.getLiquidity(poolId) == 0) lpAmount = 0;
 
         if (lpAmount != 0) {
@@ -368,10 +356,9 @@ contract WthCorrector is IWthCorrector, HookGated {
         }
         if (nativeHeld != 0) IWETH(WETH).deposit{value: nativeHeld}();
 
-        uint256 recipientAmount = received - protocolAmount - lpAmount;
-        _pay(treasury, protocolAmount);
+        uint256 recipientAmount = received - lpAmount;
         _pay(recipient, recipientAmount);
-        emit CorrectionSettled(poolId, received, protocolAmount, lpAmount, recipientAmount);
+        emit CorrectionSettled(poolId, received, lpAmount, recipientAmount);
     }
 
     /// @notice Transfers WETH.
