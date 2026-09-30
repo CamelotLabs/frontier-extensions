@@ -1,0 +1,38 @@
+[profile.default]
+src = "contracts"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+auto_detect_remappings = false
+solc_version = "0.8.26"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 300
+via_ir = false
+code_size_limit = 393216
+no_match_path = "test/fork/**"
+
+[profile.ci]
+fuzz = { runs = 1024, seed = "0x01" }
+verbosity = 3
+
+[profile.fork]
+no_match_path = "test/__none__/**"
+match_path = "test/fork/**"
+
+[rpc_endpoints]
+robinhood = "https://rpc.mainnet.chain.robinhood.com"
+
+[lint]
+lint_on_build = false
+
+[fmt]
+bracket_spacing = false
+int_types = "long"
+line_length = 120
+multiline_func_header = "attributes_first"
+number_underscore = "thousands"
+quote_style = "double"
+sort_imports = true
+tab_width = 4

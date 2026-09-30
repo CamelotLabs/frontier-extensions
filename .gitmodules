@@ -1,0 +1,3 @@
+[submodule "lib/extension-kit"]
+	path = lib/extension-kit
+	url = https://github.com/CamelotLabs/frontier-extension-kit.git

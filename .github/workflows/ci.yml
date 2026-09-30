@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - run: forge fmt --check contracts test
+      - run: forge build
+      - run: forge test
+        env:
+          FOUNDRY_PROFILE: ci
+      - run: forge snapshot --check
+        env:
+          FOUNDRY_PROFILE: ci
