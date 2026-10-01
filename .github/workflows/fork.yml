@@ -12,7 +12,7 @@ jobs:
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
+          version: v1.5.1
       - run: forge test
         env:
           FOUNDRY_PROFILE: fork
