@@ -20,7 +20,8 @@ import {HookPayload} from "kit/HookPayload.sol";
 import {ITwapObserver} from "contracts/twap-observer/ITwapObserver.sol";
 import {TwapObserver} from "contracts/twap-observer/TwapObserver.sol";
 
-/// @dev Random buys, sells, time jumps and `record` calls on one bound pool.
+/// @dev Random buys, sells, time jumps, `record` calls and ring growths on one bound pool. Logs the timestamp of
+/// every observation recorded and flags any decrease of the cardinalities.
 contract TwapHandler is Test {
     TwapObserver internal immutable OBSERVER;
     PoolSwapTest internal immutable ROUTER;
@@ -28,6 +29,11 @@ contract TwapHandler is Test {
     PoolKey internal key;
 
     uint256 public swaps;
+    uint256 public growths;
+    bool public cardinalityDecreased;
+    uint256[] internal _recorded;
+    uint256 internal _lastCardinality;
+    uint256 internal _lastCardinalityNext;
 
     constructor(TwapObserver observer, PoolSwapTest router, PoolKey memory poolKey, PoolId poolId) {
         OBSERVER = observer;
@@ -48,6 +54,7 @@ contract TwapHandler is Test {
             ""
         );
         ++swaps;
+        _track();
     }
 
     function sell(uint256 coinIn) external {
@@ -61,6 +68,7 @@ contract TwapHandler is Test {
             ""
         );
         ++swaps;
+        _track();
     }
 
     function warp(uint256 dt) external {
@@ -69,6 +77,35 @@ contract TwapHandler is Test {
 
     function record() external {
         OBSERVER.record(POOL_ID);
+        _track();
+    }
+
+    function grow(uint256 by) external {
+        uint256 next = OBSERVER.poolState(POOL_ID).cardinalityNext;
+        if (next == OBSERVER.MAX_CARDINALITY()) return;
+        next += bound(by, 1, 3);
+        if (next > OBSERVER.MAX_CARDINALITY()) next = OBSERVER.MAX_CARDINALITY();
+        OBSERVER.increaseCardinality(POOL_ID, uint16(next));
+        ++growths;
+        _track();
+    }
+
+    function recordedCount() external view returns (uint256) {
+        return _recorded.length;
+    }
+
+    function recordedAt(uint256 index) external view returns (uint256) {
+        return _recorded[index];
+    }
+
+    function _track() internal {
+        ITwapObserver.PoolState memory s = OBSERVER.poolState(POOL_ID);
+        if (s.count != 0 && (_recorded.length == 0 || _recorded[_recorded.length - 1] != s.lastTimestamp)) {
+            _recorded.push(s.lastTimestamp);
+        }
+        if (s.cardinality < _lastCardinality || s.cardinalityNext < _lastCardinalityNext) cardinalityDecreased = true;
+        _lastCardinality = s.cardinality;
+        _lastCardinalityNext = s.cardinalityNext;
     }
 
     receive() external payable {}
@@ -108,7 +145,7 @@ contract TwapObserverInvariantTest is ExtensionCampaignBase {
     /// forge-config: ci.invariant.depth = 40
     function invariant_timestampsStrictlyIncreaseAlongTheRing() public view {
         ITwapObserver.PoolState memory s = observer.poolState(pid);
-        assertLe(s.count, CARDINALITY, "count within the ring");
+        assertLe(s.count, s.cardinality, "count within the ring");
         uint256 previous;
         for (uint256 i; i < s.count; ++i) {
             ITwapObserver.Observation memory o = observer.observationAt(pid, i);
@@ -117,6 +154,33 @@ contract TwapObserverInvariantTest is ExtensionCampaignBase {
             previous = o.timestamp;
         }
         if (s.count != 0) assertEq(s.lastTimestamp, previous, "last timestamp is the newest");
+    }
+
+    /// forge-config: default.invariant.runs = 48
+    /// forge-config: default.invariant.depth = 40
+    /// forge-config: ci.invariant.runs = 48
+    /// forge-config: ci.invariant.depth = 40
+    function invariant_keptObservationsAreTheLastRecordedInOrder() public view {
+        ITwapObserver.PoolState memory s = observer.poolState(pid);
+        uint256 recorded = handler.recordedCount();
+        assertLe(s.count, recorded, "count");
+        for (uint256 i; i < s.count; ++i) {
+            uint256 timestamp = observer.observationAt(pid, i).timestamp;
+            assertEq(timestamp, handler.recordedAt(recorded - s.count + i), "the last recorded, in order");
+            assertTrue(timestamp != 1, "never a placeholder");
+        }
+    }
+
+    /// forge-config: default.invariant.runs = 48
+    /// forge-config: default.invariant.depth = 40
+    /// forge-config: ci.invariant.runs = 48
+    /// forge-config: ci.invariant.depth = 40
+    function invariant_cardinalitiesAreOrderedAndNeverDecrease() public view {
+        ITwapObserver.PoolState memory s = observer.poolState(pid);
+        assertLe(s.count, s.cardinality, "count <= cardinality");
+        assertLe(s.cardinality, s.cardinalityNext, "cardinality <= cardinalityNext");
+        assertLe(s.cardinalityNext, observer.MAX_CARDINALITY(), "cardinalityNext <= MAX_CARDINALITY");
+        assertFalse(handler.cardinalityDecreased(), "never decreases");
     }
 
     /// forge-config: default.invariant.runs = 48

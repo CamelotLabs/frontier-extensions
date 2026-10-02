@@ -11,8 +11,11 @@ import {IHookObserver} from "frontier/interfaces/extensions/IHookObserver.sol";
  * stores the hook's `observe` reading at most once per `interval` in a ring of `cardinality` slots, so
  * that any contract can read a time-weighted average tick without a keeper.
  * @dev The binding config is empty (5 minutes, 16 slots) or `abi.encode(uint32 interval, uint16 cardinality)`
- * with `interval` in [1 minute, 1 day] and `cardinality` in [2, 64]. Subscribe with `CALL_AFTER_SWAP`.
+ * with `interval` in [1 minute, 1 day] and `cardinality` in [2, 255]. Subscribe with `CALL_AFTER_SWAP`.
  * Readings are taken on swaps and through the open `record`; nothing is stored while the pool is idle.
+ * The cardinality is the number of observations the ring keeps. Anyone may grow it with `increaseCardinality`,
+ * paying for the new slots; it never shrinks, and the interval never changes. A growth takes effect when the
+ * ring next writes its last slot, so that the ring continues into the new slots in order.
  */
 interface ITwapObserver is IHookObserver {
     /**
@@ -20,6 +23,7 @@ interface ITwapObserver is IHookObserver {
      * @param hook The hook that bound the pool; the only caller of its notifications. Zero when unbound.
      * @param interval Minimum seconds between two stored observations.
      * @param cardinality Number of slots in the pool's ring.
+     * @param cardinalityNext Number of slots the ring grows to when it next writes its last slot.
      * @param newest Ring slot of the newest observation (meaningless while `count` is zero).
      * @param count Number of observations stored, at most `cardinality`.
      * @param lastTimestamp Timestamp of the newest observation (zero while `count` is zero).
@@ -27,7 +31,8 @@ interface ITwapObserver is IHookObserver {
     struct PoolState {
         address hook;
         uint32 interval;
-        uint16 cardinality;
+        uint8 cardinality;
+        uint8 cardinalityNext;
         uint8 newest;
         uint8 count;
         uint32 lastTimestamp;
@@ -50,7 +55,15 @@ interface ITwapObserver is IHookObserver {
      * @param interval Minimum seconds between two stored observations.
      * @param cardinality Number of slots in the pool's ring.
      */
-    event PoolBound(PoolId indexed poolId, address indexed hook, uint32 interval, uint16 cardinality);
+    event PoolBound(PoolId indexed poolId, address indexed hook, uint32 interval, uint8 cardinality);
+
+    /**
+     * @notice The ring of a pool was granted more slots, applied when it next writes its last slot.
+     * @param poolId The V4 pool id.
+     * @param cardinalityNextOld The pending cardinality before the call.
+     * @param cardinalityNextNew The pending cardinality after the call.
+     */
+    event CardinalityIncreased(PoolId indexed poolId, uint8 cardinalityNextOld, uint8 cardinalityNextNew);
 
     /// @notice The binding config is neither empty nor `(uint32 interval, uint16 cardinality)` within bounds.
     error InvalidConfig();
@@ -64,6 +77,9 @@ interface ITwapObserver is IHookObserver {
     /// @notice The pool's coin has not graduated: its oracle does not follow a market yet.
     error PoolNotGraduated(PoolId poolId);
 
+    /// @notice `cardinalityNext` is not above the pool's pending cardinality, or above `MAX_CARDINALITY`.
+    error InvalidCardinalityNext(PoolId poolId, uint16 cardinalityNext);
+
     /// @notice `consult` was asked for a zero span.
     error ZeroSecondsAgo();
 
@@ -72,6 +88,12 @@ interface ITwapObserver is IHookObserver {
 
     /// @notice `index` is not below the pool's observation count.
     error ObservationOutOfRange(PoolId poolId, uint256 index);
+
+    /// @notice The average tick computed from the hook's readings does not fit a tick.
+    error AverageTickOutOfRange(int256 average);
+
+    /// @notice The block timestamp no longer fits the 32 bits an observation stores.
+    error TimestampOverflow();
 
     // slither-disable-start naming-convention
     // getters of the implementation's UPPER_CASE constants
@@ -86,7 +108,7 @@ interface ITwapObserver is IHookObserver {
      * @notice Cardinality used when a pool binds with an empty config.
      * @return The number of slots.
      */
-    function DEFAULT_CARDINALITY() external view returns (uint16);
+    function DEFAULT_CARDINALITY() external view returns (uint8);
 
     /**
      * @notice Shortest interval a pool may bind.
@@ -104,13 +126,13 @@ interface ITwapObserver is IHookObserver {
      * @notice Smallest cardinality a pool may bind.
      * @return The number of slots.
      */
-    function MIN_CARDINALITY() external view returns (uint16);
+    function MIN_CARDINALITY() external view returns (uint8);
 
     /**
-     * @notice Largest cardinality a pool may bind.
+     * @notice Largest cardinality a pool may bind or grow to.
      * @return The number of slots.
      */
-    function MAX_CARDINALITY() external view returns (uint16);
+    function MAX_CARDINALITY() external view returns (uint8);
 
     // slither-disable-end naming-convention
 
@@ -121,6 +143,16 @@ interface ITwapObserver is IHookObserver {
      * @return recorded Whether an observation was stored.
      */
     function record(PoolId poolId) external returns (bool recorded);
+
+    /**
+     * @notice Grows a bound pool's ring to `cardinalityNext` slots. Open to anyone; the caller pays for the
+     * new slots, which are written with a placeholder now so that recordings into them later cost an
+     * overwrite only. The growth takes effect when the ring next writes its current last slot.
+     * @dev A placeholder is never returned: only the `count` positions holding recorded observations are read.
+     * @param poolId The V4 pool id.
+     * @param cardinalityNext The new number of slots, above the pending one and at most `MAX_CARDINALITY`.
+     */
+    function increaseCardinality(PoolId poolId, uint16 cardinalityNext) external;
 
     /**
      * @notice The time-weighted average truncated tick from the newest stored observation at least

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 
@@ -25,8 +23,12 @@ import {ITwapObserver} from "./ITwapObserver.sol";
  * after-swap observer, storing the hook's `observe` reading at most once per `interval` in a per-pool ring, and
  * answering time-weighted average ticks from it.
  * @dev A pool's binding and cursor share one slot with the hook address, so the hook check and the no-op
- * path of `onAfterSwap` cost one storage read. One observation fills one slot.
- * INVARIANT: `count <= cardinality <= MAX_CARDINALITY`, and `count` never decreases.
+ * path of `onAfterSwap` cost one storage read. One observation fills one slot. `increaseCardinality` pre-writes
+ * the new slots with a placeholder (timestamp 1); a growth applies when the ring writes its last slot, at which
+ * point ring order and slot order coincide, so the ring continues into the new slots without reordering.
+ * INVARIANT: `count <= cardinality <= cardinalityNext <= MAX_CARDINALITY`; none of the three ever decreases.
+ * INVARIANT: only the `count` positions from the oldest observation are read, and each holds a recording,
+ * never a placeholder.
  * INVARIANT: stored timestamps increase strictly from the oldest observation to the newest, at least
  * `interval` apart; `lastTimestamp` is the newest one's.
  * INVARIANT: `consult(poolId, secondsAgo)` returns `span >= secondsAgo` or reverts.
@@ -36,7 +38,7 @@ contract TwapObserver is ITwapObserver, HookGated {
     uint32 public constant DEFAULT_INTERVAL = 5 minutes;
 
     /// @inheritdoc ITwapObserver
-    uint16 public constant DEFAULT_CARDINALITY = 16;
+    uint8 public constant DEFAULT_CARDINALITY = 16;
 
     /// @inheritdoc ITwapObserver
     uint32 public constant MIN_INTERVAL = 1 minutes;
@@ -45,18 +47,21 @@ contract TwapObserver is ITwapObserver, HookGated {
     uint32 public constant MAX_INTERVAL = 1 days;
 
     /// @inheritdoc ITwapObserver
-    uint16 public constant MIN_CARDINALITY = 2;
+    uint8 public constant MIN_CARDINALITY = 2;
 
     /// @inheritdoc ITwapObserver
-    uint16 public constant MAX_CARDINALITY = 64;
+    uint8 public constant MAX_CARDINALITY = 255;
 
     /// @dev Length of an `abi.encode(uint32, uint16)` config.
     uint256 private constant CONFIG_BYTES = 64;
 
+    /// @dev Timestamp written in the slots a growth reserves, so that later recordings overwrite a non-zero slot.
+    uint32 private constant PLACEHOLDER_TIMESTAMP = 1;
+
     /// @dev Per-pool binding and ring cursor; `hook == address(0)` marks an unbound pool.
     mapping(PoolId poolId => PoolState state) internal _pools;
 
-    /// @dev Per-pool ring of observations; only the first `cardinality` slots are used.
+    /// @dev Per-pool ring of observations; only the first `cardinalityNext` slots are ever written.
     mapping(PoolId poolId => Observation[MAX_CARDINALITY] ring) internal _rings;
 
     /// @param factory The Frontier `BCTokenFactory`.
@@ -68,7 +73,7 @@ contract TwapObserver is ITwapObserver, HookGated {
         if (_pools[poolId].hook != address(0)) revert PoolAlreadyBound(poolId);
 
         uint32 interval = DEFAULT_INTERVAL;
-        uint16 cardinality = DEFAULT_CARDINALITY;
+        uint8 cardinality = DEFAULT_CARDINALITY;
         if (config.length != 0) {
             if (config.length != CONFIG_BYTES) revert InvalidConfig();
             (uint256 rawInterval, uint256 rawCardinality) = abi.decode(config, (uint256, uint256));
@@ -76,11 +81,17 @@ contract TwapObserver is ITwapObserver, HookGated {
             if (rawCardinality < MIN_CARDINALITY || rawCardinality > MAX_CARDINALITY) revert InvalidConfig();
             // both fit: bounded above by MAX_INTERVAL and MAX_CARDINALITY
             interval = uint32(rawInterval);
-            cardinality = uint16(rawCardinality);
+            cardinality = uint8(rawCardinality);
         }
 
         _pools[poolId] = PoolState({
-            hook: hook, interval: interval, cardinality: cardinality, newest: 0, count: 0, lastTimestamp: 0
+            hook: hook,
+            interval: interval,
+            cardinality: cardinality,
+            cardinalityNext: cardinality,
+            newest: 0,
+            count: 0,
+            lastTimestamp: 0
         });
         emit PoolBound(poolId, hook, interval, cardinality);
     }
@@ -114,6 +125,27 @@ contract TwapObserver is ITwapObserver, HookGated {
     }
 
     /// @inheritdoc ITwapObserver
+    function increaseCardinality(PoolId poolId, uint16 cardinalityNext) external {
+        PoolState storage state = _pools[poolId];
+        if (state.hook == address(0)) revert PoolNotBound(poolId);
+        uint8 previous = state.cardinalityNext;
+        if (cardinalityNext <= previous || cardinalityNext > MAX_CARDINALITY) {
+            revert InvalidCardinalityNext(poolId, cardinalityNext);
+        }
+
+        // slots at or above the pending cardinality have never held a recording
+        Observation[MAX_CARDINALITY] storage ring = _rings[poolId];
+        // writing the new slots is the purpose of the call, paid by its caller
+        // aderyn-ignore-next-line(costly-loop)
+        for (uint256 i = previous; i < cardinalityNext; ++i) {
+            ring[i] = Observation({timestamp: PLACEHOLDER_TIMESTAMP, tickCumulative: 0});
+        }
+        // fits: bounded above by MAX_CARDINALITY
+        state.cardinalityNext = uint8(cardinalityNext);
+        emit CardinalityIncreased(poolId, previous, uint8(cardinalityNext));
+    }
+
+    /// @inheritdoc ITwapObserver
     function consult(PoolId poolId, uint32 secondsAgo) external view returns (int24 averageTick, uint32 span) {
         PoolState memory state = _pools[poolId];
         if (state.hook == address(0)) revert PoolNotBound(poolId);
@@ -134,7 +166,10 @@ contract TwapObserver is ITwapObserver, HookGated {
         // the remainder decides the rounding toward negative infinity, not randomness
         // slither-disable-next-line weak-prng
         if (delta < 0 && delta % int256(uint256(span)) != 0) --average;
-        averageTick = SafeCast.toInt24(average);
+        if (average < type(int24).min || average > type(int24).max) revert AverageTickOutOfRange(average);
+        // checked just above
+        // aderyn-ignore-next-line(unsafe-casting)
+        averageTick = int24(average);
     }
 
     /// @inheritdoc ITwapObserver
@@ -156,19 +191,33 @@ contract TwapObserver is ITwapObserver, HookGated {
     }
 
     /// @notice Stores the hook's current reading in the slot after the newest one, overwriting the oldest
-    /// once the ring is full.
+    /// once the ring is full; a pending growth applies when the newest sits in the last slot.
     function _record(PoolId poolId, PoolState memory state) internal {
         // only the cumulative is stored, the current tick is not
         // slither-disable-next-line unused-return
         (int56 tickCumulative,) = IFactoryHook(state.hook).observe(poolId);
-        uint32 timestamp = SafeCast.toUint32(block.timestamp);
+        if (block.timestamp > type(uint32).max) revert TimestampOverflow();
+        // checked just above
+        uint32 timestamp = uint32(block.timestamp);
 
-        // ring index arithmetic on an observation counter, neither randomness nor a balance
-        // slither-disable-next-line weak-prng,incorrect-equality
-        uint8 slot = state.count == 0 ? 0 : uint8((uint256(state.newest) + 1) % state.cardinality);
+        // starts at zero, the first slot
+        // slither-disable-next-line uninitialized-local
+        uint256 slot;
+        if (state.count != 0) {
+            // a ring cursor compared to the last slot, not a balance
+            // slither-disable-next-line incorrect-equality
+            if (state.newest == state.cardinality - 1 && state.cardinalityNext > state.cardinality) {
+                state.cardinality = state.cardinalityNext;
+            }
+            // ring index arithmetic in 256 bits, not randomness; the result is below cardinality, so fits uint8
+            // slither-disable-next-line weak-prng
+            slot = (uint256(state.newest) + 1) % state.cardinality;
+        }
         _rings[poolId][slot] = Observation({timestamp: timestamp, tickCumulative: tickCumulative});
 
-        state.newest = slot;
+        // slot < cardinality <= MAX_CARDINALITY
+        // aderyn-ignore-next-line(unsafe-casting)
+        state.newest = uint8(slot);
         if (state.count < state.cardinality) ++state.count;
         state.lastTimestamp = timestamp;
         _pools[poolId] = state;

@@ -29,9 +29,29 @@ contract TwapObserverTest is ExtensionCampaignBase {
     /// @dev `onAfterSwap` writing a fresh ring slot, the observer cold.
     uint256 internal constant RECORDING_GAS_CEILING = 32_000;
 
+    /// @dev `onAfterSwap` writing a slot pre-written by a growth, the observer cold.
+    uint256 internal constant PREWRITTEN_RECORDING_GAS_CEILING = 12_000;
+
+    /// @dev `increaseCardinality` per added slot.
+    uint256 internal constant GROWTH_GAS_PER_SLOT_CEILING = 23_000;
+
+    /// @dev `consult` on a full 255-slot ring, the observer cold.
+    uint256 internal constant CONSULT_255_GAS_CEILING = 38_000;
+
+    /// @dev Reference model of a ring's cursor, mirrored step by step in the fuzz.
+    struct RingModel {
+        uint256 cardinality;
+        uint256 cardinalityNext;
+        uint256 newest;
+        uint256 count;
+    }
+
     TwapObserver internal observer;
     MockBCToken internal tCoin;
     PoolId internal pid;
+
+    /// @dev Timestamps of every observation recorded on a pool, oldest first.
+    mapping(PoolId poolId => uint256[] timestamps) internal _history;
 
     function setUp() public override {
         super.setUp();
@@ -101,6 +121,47 @@ contract TwapObserverTest is ExtensionCampaignBase {
         return abi.encodeWithSelector(ITwapObserver.NotEnoughHistory.selector, poolId, secondsAgo);
     }
 
+    /// @dev Records on `poolId` (which must be due), logs the timestamp, then warps one 60 s interval.
+    function _rec(PoolId poolId) internal {
+        assertTrue(observer.record(poolId), "recorded");
+        _history[poolId].push(block.timestamp);
+        _warp(60);
+    }
+
+    /// @dev The kept observations are exactly the last `count` recorded, in order, and none is a placeholder.
+    function _assertKeptInOrder(PoolId poolId) internal view {
+        uint256[] storage history = _history[poolId];
+        ITwapObserver.PoolState memory s = observer.poolState(poolId);
+        assertLe(s.count, history.length, "count");
+        for (uint256 i; i < s.count; ++i) {
+            uint256 timestamp = observer.observationAt(poolId, i).timestamp;
+            assertEq(timestamp, history[history.length - s.count + i], "observation in order");
+            assertTrue(timestamp != 1, "never a placeholder");
+        }
+        if (s.count != 0) {
+            assertEq(observer.latestObservation(poolId).timestamp, history[history.length - 1], "latest");
+        }
+    }
+
+    /// @dev `consult` reaches every kept observation at its exact age, and nothing older.
+    function _assertConsultReachesEveryObservation(PoolId poolId) internal {
+        ITwapObserver.PoolState memory s = observer.poolState(poolId);
+        for (uint256 i; i < s.count; ++i) {
+            uint32 age = uint32(block.timestamp - observer.observationAt(poolId, i).timestamp);
+            if (age == 0) continue;
+            (, uint32 span) = observer.consult(poolId, age);
+            assertEq(span, age, "consult picks the observation of that age");
+        }
+        uint32 beyond = uint32(block.timestamp - observer.observationAt(poolId, 0).timestamp + 1);
+        vm.expectRevert(_notEnoughHistory(poolId, beyond));
+        observer.consult(poolId, beyond);
+    }
+
+    function _expectGrowthRefused(PoolId poolId, uint16 cardinalityNext) internal {
+        vm.expectRevert(abi.encodeWithSelector(ITwapObserver.InvalidCardinalityNext.selector, poolId, cardinalityNext));
+        observer.increaseCardinality(poolId, cardinalityNext);
+    }
+
     /// @dev Marks the account and its storage cold (the `cool` cheatcode, absent from this forge-std's `Vm`).
     function _cool(address target) internal {
         (bool ok,) = address(vm).call(abi.encodeWithSignature("cool(address)", target));
@@ -116,6 +177,7 @@ contract TwapObserverTest is ExtensionCampaignBase {
         assertEq(s.hook, address(hook), "hook");
         assertEq(s.interval, 5 minutes, "interval");
         assertEq(s.cardinality, 16, "cardinality");
+        assertEq(s.cardinalityNext, 16, "nothing pending");
         assertEq(s.count, 0, "nothing stored at graduation");
         assertEq(s.lastTimestamp, 0, "no timestamp");
         assertEq(observer.hookOf(pid), address(hook), "pinned hook");
@@ -134,15 +196,17 @@ contract TwapObserverTest is ExtensionCampaignBase {
         assertEq(s.hook, address(hook), "hook");
         assertEq(s.interval, 90, "interval");
         assertEq(s.cardinality, 7, "cardinality");
+        assertEq(s.cardinalityNext, 7, "cardinality next");
     }
 
     function test_register_acceptsTheBounds() public {
         (, PoolId low) = _deployBound(_cfg(1 minutes, 2));
         assertEq(observer.poolState(low).interval, 60, "min interval");
         assertEq(observer.poolState(low).cardinality, 2, "min cardinality");
-        (, PoolId high) = _deployBound(_cfg(1 days, 64));
+        (, PoolId high) = _deployBound(_cfg(1 days, 255));
         assertEq(observer.poolState(high).interval, 86_400, "max interval");
-        assertEq(observer.poolState(high).cardinality, 64, "max cardinality");
+        assertEq(observer.poolState(high).cardinality, 255, "max cardinality");
+        assertEq(observer.MAX_CARDINALITY(), 255, "max constant");
     }
 
     function test_RevertWhen_configIsOutOfBoundsOrMalformed() public {
@@ -152,7 +216,7 @@ contract TwapObserverTest is ExtensionCampaignBase {
         _expectRefused(_cfg(0, 16), err);
         _expectRefused(_cfg(300, 1), err);
         _expectRefused(_cfg(300, 0), err);
-        _expectRefused(_cfg(300, 65), err);
+        _expectRefused(_cfg(300, 256), err);
         _expectRefused(abi.encode(uint256(type(uint32).max) + 300, uint16(16)), err);
         _expectRefused(abi.encode(uint32(300), uint256(type(uint16).max) + 17), err);
         _expectRefused(abi.encode(uint32(300)), err);
@@ -435,6 +499,30 @@ contract TwapObserverTest is ExtensionCampaignBase {
         vm.clearMockedCalls();
     }
 
+    function test_RevertWhen_consultAverageDoesNotFitATick() public {
+        bytes memory observeCall = abi.encodeCall(IFactoryHook.observe, (pid));
+        vm.mockCall(address(hook), observeCall, abi.encode(int56(0), int24(0)));
+        observer.record(pid);
+        _warp(1);
+
+        int56 tooHigh = int56(type(int24).max) + 1;
+        vm.mockCall(address(hook), observeCall, abi.encode(tooHigh, int24(0)));
+        vm.expectRevert(abi.encodeWithSelector(ITwapObserver.AverageTickOutOfRange.selector, int256(tooHigh)));
+        observer.consult(pid, 1);
+
+        int56 tooLow = int56(type(int24).min) - 1;
+        vm.mockCall(address(hook), observeCall, abi.encode(tooLow, int24(0)));
+        vm.expectRevert(abi.encodeWithSelector(ITwapObserver.AverageTickOutOfRange.selector, int256(tooLow)));
+        observer.consult(pid, 1);
+        vm.clearMockedCalls();
+    }
+
+    function test_RevertWhen_recordPastTheLastTimestampAnObservationHolds() public {
+        vm.warp(uint256(type(uint32).max) + 1);
+        vm.expectRevert(ITwapObserver.TimestampOverflow.selector);
+        observer.record(pid);
+    }
+
     function testFuzz_consult_binarySearchMatchesALinearScan(
         uint16 cardinality,
         uint16 records,
@@ -444,13 +532,31 @@ contract TwapObserverTest is ExtensionCampaignBase {
         cardinality = uint16(bound(cardinality, 2, 64));
         records = uint16(bound(records, 1, 150));
         (MockBCToken token, PoolId p) = _deployBound(_cfg(60, cardinality));
+        RingModel memory m = RingModel({cardinality: cardinality, cardinalityNext: cardinality, newest: 0, count: 0});
         for (uint256 i; i < records; ++i) {
-            if (uint256(keccak256(abi.encode(seed, i, "swap"))) % 4 == 0) _buy(token, 0.01 ether);
+            uint256 roll = uint256(keccak256(abi.encode(seed, i, "action")));
+            if (roll % 7 == 0 && m.cardinalityNext < 255) {
+                m.cardinalityNext = bound(
+                    roll >> 8, m.cardinalityNext + 1, m.cardinalityNext + 40 > 255 ? 255 : m.cardinalityNext + 40
+                );
+                observer.increaseCardinality(p, uint16(m.cardinalityNext));
+            }
+            if (roll % 4 == 0) _buy(token, 0.01 ether);
             else observer.record(p);
+            _history[p].push(block.timestamp);
+            if (m.count != 0 && m.newest == m.cardinality - 1 && m.cardinalityNext > m.cardinality) {
+                m.cardinality = m.cardinalityNext;
+            }
+            m.newest = m.count == 0 ? 0 : (m.newest + 1) % m.cardinality;
+            if (m.count < m.cardinality) ++m.count;
             _warp(60 + uint256(keccak256(abi.encode(seed, i))) % 240);
         }
         ITwapObserver.PoolState memory s = observer.poolState(p);
-        assertEq(s.count, records < cardinality ? records : cardinality, "count");
+        assertEq(s.count, m.count, "count");
+        assertEq(s.cardinality, m.cardinality, "cardinality");
+        assertEq(s.cardinalityNext, m.cardinalityNext, "cardinality next");
+        assertEq(s.newest, m.newest, "newest");
+        _assertKeptInOrder(p);
         secondsAgo = uint32(bound(secondsAgo, 1, block.timestamp - START + 300));
 
         uint256 target = block.timestamp - secondsAgo;
@@ -475,6 +581,191 @@ contract TwapObserverTest is ExtensionCampaignBase {
             _floorDiv(int256(_cumulative(p)) - chosen.tickCumulative, int256(uint256(span))),
             "average over the span"
         );
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Growth
+    // ---------------------------------------------------------------------------------------------
+
+    function test_grow_byAStranger() public {
+        vm.expectEmit(true, false, false, true, address(observer));
+        emit ITwapObserver.CardinalityIncreased(pid, 16, 20);
+        vm.prank(makeAddr("stranger"));
+        observer.increaseCardinality(pid, 20);
+
+        ITwapObserver.PoolState memory s = observer.poolState(pid);
+        assertEq(s.cardinality, 16, "applied later");
+        assertEq(s.cardinalityNext, 20, "pending");
+        assertEq(s.count, 0, "nothing recorded");
+    }
+
+    function test_RevertWhen_growthIsNotAnIncreaseOrAboveTheMaximum() public {
+        _expectGrowthRefused(pid, 16);
+        _expectGrowthRefused(pid, 15);
+        _expectGrowthRefused(pid, 0);
+        _expectGrowthRefused(pid, 256);
+        _expectGrowthRefused(pid, type(uint16).max);
+
+        observer.increaseCardinality(pid, 20);
+        _expectGrowthRefused(pid, 20);
+        _expectGrowthRefused(pid, 18);
+        observer.increaseCardinality(pid, 255);
+        _expectGrowthRefused(pid, 255);
+        _expectGrowthRefused(pid, 256);
+    }
+
+    function test_RevertWhen_growingAnUnboundPool() public {
+        PoolId unbound = PoolId.wrap(keccak256("unbound"));
+        vm.expectRevert(abi.encodeWithSelector(ITwapObserver.PoolNotBound.selector, unbound));
+        observer.increaseCardinality(unbound, 20);
+    }
+
+    function test_grow_beforeAnyObservation() public {
+        (, PoolId p) = _deployBound(_cfg(60, 2));
+        observer.increaseCardinality(p, 4);
+        _rec(p);
+        _rec(p);
+        assertEq(observer.poolState(p).cardinality, 2, "the last slot was just written");
+        _rec(p);
+        assertEq(observer.poolState(p).cardinality, 4, "applied on the next write");
+        _assertKeptInOrder(p);
+        _rec(p);
+        _rec(p);
+        _rec(p);
+        assertEq(observer.poolState(p).count, 4, "full at the new size");
+        _assertKeptInOrder(p);
+        _assertConsultReachesEveryObservation(p);
+    }
+
+    function test_grow_whileTheRingIsPartlyFilled() public {
+        (, PoolId p) = _deployBound(_cfg(60, 4));
+        _rec(p);
+        _rec(p);
+        observer.increaseCardinality(p, 6);
+        for (uint256 i; i < 8; ++i) {
+            _rec(p);
+            _assertKeptInOrder(p);
+        }
+        ITwapObserver.PoolState memory s = observer.poolState(p);
+        assertEq(s.cardinality, 6, "grown");
+        assertEq(s.count, 6, "full at the new size");
+        _assertConsultReachesEveryObservation(p);
+    }
+
+    function test_grow_whileFullAndWrapped_appliesAtTheEndOfTheLap() public {
+        (, PoolId p) = _deployBound(_cfg(60, 4));
+        for (uint256 i; i < 6; ++i) {
+            _rec(p);
+        }
+        assertEq(observer.poolState(p).newest, 1, "wrapped: slots 0, 1, 2, 3, 0, 1");
+        observer.increaseCardinality(p, 7);
+        _assertKeptInOrder(p);
+        _assertConsultReachesEveryObservation(p);
+
+        _rec(p);
+        assertEq(observer.poolState(p).cardinality, 4, "mid-lap: not applied");
+        assertEq(observer.poolState(p).count, 4, "still four kept");
+        _assertKeptInOrder(p);
+        _assertConsultReachesEveryObservation(p);
+
+        _rec(p);
+        assertEq(observer.poolState(p).newest, 3, "last slot written");
+        assertEq(observer.poolState(p).cardinality, 4, "not applied yet");
+        _assertKeptInOrder(p);
+        _assertConsultReachesEveryObservation(p);
+
+        _rec(p);
+        ITwapObserver.PoolState memory s = observer.poolState(p);
+        assertEq(s.cardinality, 7, "applied at the end of the lap");
+        assertEq(s.newest, 4, "continues into the new slots");
+        assertEq(s.count, 5, "nothing overwritten");
+        _assertKeptInOrder(p);
+        _assertConsultReachesEveryObservation(p);
+
+        for (uint256 i; i < 4; ++i) {
+            _rec(p);
+            _assertKeptInOrder(p);
+        }
+        assertEq(observer.poolState(p).count, 7, "full at the new size");
+        _assertConsultReachesEveryObservation(p);
+    }
+
+    function test_grow_severalInARowAndWhilePending() public {
+        (, PoolId p) = _deployBound(_cfg(60, 3));
+        observer.increaseCardinality(p, 4);
+        observer.increaseCardinality(p, 6);
+        _rec(p);
+        _rec(p);
+        _rec(p);
+        assertEq(observer.poolState(p).cardinality, 3, "pending");
+        _rec(p);
+        assertEq(observer.poolState(p).cardinality, 6, "the latest request applies at once");
+        observer.increaseCardinality(p, 8);
+        assertEq(observer.poolState(p).cardinality, 6, "requested while another lap runs");
+        for (uint256 i; i < 10; ++i) {
+            _rec(p);
+            _assertKeptInOrder(p);
+        }
+        ITwapObserver.PoolState memory s = observer.poolState(p);
+        assertEq(s.cardinality, 8, "second growth applied");
+        assertEq(s.count, 8, "full");
+        _assertConsultReachesEveryObservation(p);
+    }
+
+    function test_grow_consultIsUnchangedByAGrowth() public {
+        (MockBCToken token, PoolId p) = _deployBound(_cfg(60, 4));
+        for (uint256 i; i < 6; ++i) {
+            _buy(token, 0.05 ether);
+            _history[p].push(block.timestamp);
+            _warp(70);
+        }
+        (int24 averageBefore, uint32 spanBefore) = observer.consult(p, 150);
+        observer.increaseCardinality(p, 10);
+        (int24 averageAfter, uint32 spanAfter) = observer.consult(p, 150);
+        assertEq(averageAfter, averageBefore, "average");
+        assertEq(spanAfter, spanBefore, "span");
+        _assertKeptInOrder(p);
+    }
+
+    function test_grow_keepsMoreHistory() public {
+        (, PoolId small) = _deployBound(_cfg(60, 2));
+        (, PoolId grown) = _deployBound(_cfg(60, 2));
+        observer.increaseCardinality(grown, 4);
+        uint256 first = block.timestamp;
+        for (uint256 i; i < 4; ++i) {
+            observer.record(small);
+            observer.record(grown);
+            _warp(60);
+        }
+        uint32 age = uint32(block.timestamp - first);
+        (, uint32 span) = observer.consult(grown, age);
+        assertEq(span, age, "the first observation is still reachable");
+        assertEq(observer.observationAt(grown, 0).timestamp, first, "oldest kept");
+        vm.expectRevert(_notEnoughHistory(small, age));
+        observer.consult(small, age);
+    }
+
+    function test_grow_placeholdersAreNeverRead() public {
+        (, PoolId p) = _deployBound(_cfg(60, 2));
+        observer.increaseCardinality(p, 255);
+
+        assertEq(observer.latestObservation(p).timestamp, 0, "empty ring");
+        vm.expectRevert(abi.encodeWithSelector(ITwapObserver.ObservationOutOfRange.selector, p, 0));
+        observer.observationAt(p, 0);
+        vm.expectRevert(_notEnoughHistory(p, 1));
+        observer.consult(p, 1);
+
+        _rec(p);
+        _rec(p);
+        _assertKeptInOrder(p);
+        _rec(p);
+        assertEq(observer.poolState(p).cardinality, 255, "applied");
+        // the slot just written held a placeholder (timestamp 1); every other pre-written slot still does
+        _assertKeptInOrder(p);
+        vm.expectRevert(abi.encodeWithSelector(ITwapObserver.ObservationOutOfRange.selector, p, 3));
+        observer.observationAt(p, 3);
+        // a placeholder at timestamp 1 would satisfy any target; consult still stops at the oldest recording
+        _assertConsultReachesEveryObservation(p);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -550,5 +841,52 @@ contract TwapObserverTest is ExtensionCampaignBase {
         emit log_named_uint("consult, binary search over 16 slots (cold observer)", consultGas);
         assertEq(span, 35 minutes + 1, "span");
         assertLt(recordGas, RECORDING_GAS_CEILING, "record");
+    }
+
+    function test_gas_increaseCardinalityPerSlot() public {
+        _cool(address(observer));
+        uint256 before = gasleft();
+        observer.increaseCardinality(pid, 48);
+        uint256 perSlot = (before - gasleft()) / 32;
+
+        emit log_named_uint("increaseCardinality, per added slot (cold observer, 32 slots)", perSlot);
+        assertLt(perSlot, GROWTH_GAS_PER_SLOT_CEILING, "per slot");
+    }
+
+    function test_gas_onAfterSwapRecordingIntoAPrewrittenSlot() public {
+        for (uint256 i; i < 16; ++i) {
+            observer.record(pid);
+            _warp(5 minutes);
+        }
+        observer.increaseCardinality(pid, 17);
+        _cool(address(observer));
+
+        vm.prank(address(hook));
+        uint256 before = gasleft();
+        observer.onAfterSwap(pid, toBalanceDelta(-1, 1), 3000, 0, "");
+        uint256 used = before - gasleft();
+
+        emit log_named_uint("onAfterSwap, recording into a pre-written slot (cold observer)", used);
+        ITwapObserver.PoolState memory s = observer.poolState(pid);
+        assertEq(s.newest, 16, "wrote the pre-written slot");
+        assertEq(s.count, 17, "count");
+        assertLt(used, PREWRITTEN_RECORDING_GAS_CEILING, "overwrite price, not the fresh-slot price");
+    }
+
+    function test_gas_consultOnA255SlotRing() public {
+        (, PoolId p) = _deployBound(_cfg(60, 255));
+        for (uint256 i; i < 260; ++i) {
+            observer.record(p);
+            _warp(60);
+        }
+        assertEq(observer.poolState(p).count, 255, "full");
+        _cool(address(observer));
+        uint256 before = gasleft();
+        (, uint32 span) = observer.consult(p, 100 minutes);
+        uint256 used = before - gasleft();
+
+        emit log_named_uint("consult, binary search over 255 slots (cold observer)", used);
+        assertEq(span, 100 minutes, "span");
+        assertLt(used, CONSULT_255_GAS_CEILING, "consult");
     }
 }
