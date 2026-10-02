@@ -24,6 +24,7 @@ FOUNDRY_PROFILE=fork forge test     # live: against Robinhood Chain (in CI: the 
 | Extension | Roles | Status |
 |---|---|---|
 | [`WthCorrector`](contracts/wth-corrector/WthCorrector.sol) | fee calculator + after-swap observer | not deployed |
+| [`TwapObserver`](contracts/twap-observer/TwapObserver.sol) | after-swap observer | not deployed |
 
 ### WthCorrector
 
@@ -81,6 +82,45 @@ hook, a scripted executor arbitraging against a plain v4 pool, a hostile executo
 misbehaviour must stay contained, and the `getPoolState` prefix read checked against the typed
 decode); [`test/fork/`](test/fork/) checks that prefix on the live hook and simulates corrections on
 a coin launched through the live factory.
+
+### TwapObserver
+
+One singleton bound on a pool as an after-swap observer. The hook's `observe(poolId)` gives the
+truncated tick cumulative at the current timestamp, with no history; the observer stores those
+readings so that any contract can read a time-weighted average tick without a keeper.
+
+- **Binding.** `onRegisterObserver`, hook-gated through the kit's `HookGated`, once per pool (listing
+  the observer twice fails the deploy). The config is empty, for the defaults (`interval` 5 minutes,
+  `cardinality` 16), or `abi.encode(uint32 interval, uint16 cardinality)` with `interval` between
+  1 minute and 1 day and `cardinality` between 2 and 64; anything else fails the deploy. Subscribe
+  with `CALL_AFTER_SWAP`. `PoolBound(poolId, hook, interval, cardinality)` records the binding.
+- **Recording.** On every swap, if at least `interval` seconds passed since the pool's newest
+  observation, `onAfterSwap` stores `(block.timestamp, tickCumulative)` in the next slot of the
+  pool's ring of `cardinality` slots, overwriting the oldest once full; otherwise it returns after one
+  storage read. `record(poolId)` does the same for anyone, on a bound and graduated pool (right after
+  graduation, or after a quiet stretch). No event on recording.
+- **Reading.** `consult(poolId, secondsAgo)` returns `(averageTick, span)`: the average truncated tick
+  from the newest observation at least `secondsAgo` old to now, rounded toward negative infinity,
+  and the seconds it actually covers. `span >= secondsAgo` always and the answer is exact for that
+  span (no interpolation); check `span` against your own tolerance. It reverts `NotEnoughHistory`
+  when no stored observation is that old, and on `secondsAgo == 0`. `poolState`, `observationAt`
+  (index 0 the oldest) and `latestObservation` expose the ring.
+- **Gas.** Measured on the observer alone, its account cold: about 4.1k when nothing is due, 29.3k
+  when it writes a fresh slot, about 10.7k for `record` overwriting a slot of a full ring, 21.5k for
+  `consult` on a full 16-slot ring. Inside a real swap, the hook's notification included, a bound
+  pool pays about 9.5k more per swap when nothing is due and 37.5k when a fresh slot is written.
+- **Limits.** It knows only what the hook's truncated tick knows: that tick moves at most
+  `MAX_ABS_TICK_MOVE` (9116) per block from the tick the block opened at, so a larger jump reaches
+  the average over several blocks. History reaches back `cardinality * interval`
+  seconds at least, more when swaps are sparse. Nothing is recorded while nobody swaps, which is
+  harmless since the price does not move then; `record` fills the gap when a consumer needs it.
+  When swaps resume after a quiet stretch, a read reaches back to the observation taken before the
+  stretch until the fresh one is `secondsAgo` old, so the average catches up within `secondsAgo`.
+  The cumulative comes from `IFactoryHook.observe`, not from the `IExtensionHost` surface.
+
+Tests: [`test/twap-observer/`](test/twap-observer/) (binding and refused configs, recording through
+real swaps and `record`, `consult` against hand computations, binary search against a linear scan on
+fuzzed rings, an invariant suite of random swaps and time jumps, and gas ceilings).
 
 ## Build and test
 
