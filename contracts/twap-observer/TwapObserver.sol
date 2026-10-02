@@ -15,8 +15,6 @@ import {HookGated} from "kit/HookGated.sol";
 
 import {ITwapObserver} from "./ITwapObserver.sol";
 
-// slither-disable-start timestamp
-// timestamps are the data this contract stores and compares, not a source of randomness or a deadline
 /**
  * @title TwapObserver
  * @notice Official history extension for the hook's truncated tick oracle: one singleton bound per pool as an
@@ -33,6 +31,8 @@ import {ITwapObserver} from "./ITwapObserver.sol";
  * `interval` apart; `lastTimestamp` is the newest one's.
  * INVARIANT: `consult(poolId, secondsAgo)` returns `span >= secondsAgo` or reverts.
  */
+// slither-disable-start timestamp
+// timestamps are the data this contract stores and compares, not a source of randomness or a deadline
 contract TwapObserver is ITwapObserver, HookGated {
     /// @inheritdoc ITwapObserver
     uint32 public constant DEFAULT_INTERVAL = 5 minutes;

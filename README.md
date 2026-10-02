@@ -116,15 +116,23 @@ readings so that any contract can read a time-weighted average tick without a ke
   new)` records every growth.
 - **Gas.** Measured on the observer alone, its account cold: about 4.1k when nothing is due, 29.6k
   when it writes a fresh slot, 9.7k when it writes a slot a growth pre-wrote, about 10.9k for
-  `record` overwriting a slot of a full ring, 21.5k for `consult` on a full 16-slot ring and 33.0k on
-  a full 255-slot ring. `increaseCardinality` costs about 22.7k per added slot. Inside a real swap, the hook's notification included, a bound
-  pool pays about 9.5k more per swap when nothing is due and 37.5k when a fresh slot is written.
+  `record` overwriting a slot of a full ring, 21.5k for `consult` on a full 16-slot ring and 33.1k on
+  a full 255-slot ring. `increaseCardinality` costs about 22.7k per added slot. Inside a real swap,
+  the hook's notification included, a bound pool pays about 9.5k more per swap when nothing is due
+  and 37.5k when a fresh slot is written. Since anyone may grow a pool's ring and it never shrinks,
+  a reader under a gas cap (a fee calculator under `CALC_GAS_STIPEND`, an observer under the shared
+  budget) budgets `consult` at its 255-slot cost, whatever the pool's cardinality today.
 - **Limits.** It knows only what the hook's truncated tick knows: that tick moves at most
-  `MAX_ABS_TICK_MOVE` (9116) per block from the tick the block opened at, so a larger jump reaches
-  the average over several blocks. History reaches back `cardinality * interval`
-  seconds at least, more when swaps are sparse; after a growth, only once the ring has filled the
-  new slots. Nothing is recorded while nobody swaps, which is
-  harmless since the price does not move then; `record` fills the gap when a consumer needs it.
+  `MAX_ABS_TICK_MOVE` (9116) per second (the clamp keys on `block.timestamp`, which several blocks
+  share on Robinhood Chain) from the tick the second opened at, so a larger jump reaches the
+  average over several seconds. 9116 ticks is a factor of 2.49 on the price, so a short window
+  stays movable: a tick held off by `d` for `t` seconds shifts an average over `S` seconds by
+  `d * t / S`. History reaches back `(cardinality - 1) * interval` seconds at least once the ring
+  is full (the newest observation can be brand new), more when swaps are sparse; after a growth,
+  only once the ring has filled the new slots. Ask `consult` for at most that, since anyone
+  recording on schedule holds the history at exactly that reach. Nothing is recorded while nobody
+  swaps, which is harmless since the price does not move then; `record` fills the gap when a
+  consumer needs it.
   When swaps resume after a quiet stretch, a read reaches back to the observation taken before the
   stretch until the fresh one is `secondsAgo` old, so the average catches up within `secondsAgo`.
   The cumulative comes from `IFactoryHook.observe`, not from the `IExtensionHost` surface.
