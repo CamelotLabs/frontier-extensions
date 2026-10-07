@@ -5,7 +5,13 @@ broadcast/
 .env.*
 !.env.example
 
-# local audit tooling output (solidity-auditor runs, pipeline bundles, x-ray drafts)
+# local audit tool output: solidity-auditor runs, pipeline bundles, x-ray drafts, slither, aderyn, coverage
 /.solidity-auditor/
 /.audit-*/
 /x-ray/
+/slither-report.json
+/dependency-tree.txt
+/crytic-export/
+/report.md
+/lcov.info
+/coverage-report/
