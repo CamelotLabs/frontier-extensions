@@ -1,0 +1,5 @@
+LEAD | contract: TwapObserver | function: onRegisterObserver | bug_class: unverified-pool-hook-binding | group_key: TwapObserver | onRegisterObserver | unverified-pool-hook-binding
+code_smells: `onRegisterObserver` pins `_pools[poolId].hook` to whatever address `_registerPool` accepts as the current hook. Nothing checks that `poolId` comes from a `PoolKey` whose `hooks` field is that caller. `HookGated._registerPool` trusts the current hook to register only its own pools. `LiquidityManager.setHook` is `onlyOwner`. The developer's probe `test_audit_hookWithoutObserveBindsThenStaysDead` binds an arbitrary pool id from a mocked current hook. After the bind, `onAfterSwap` accepts calls from that hook, and `consult` reads that hook's `observe`.
+description: A factory owner who points the liquidity manager at an attacker hook can bind a real pool that has no TWAP yet and feed `consult` any value. We did not prove that a non-owner path exists, because an honest v1.1 hook registers only pool ids of its own keys.
+
+Functions opened: 21

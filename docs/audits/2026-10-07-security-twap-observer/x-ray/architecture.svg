@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1343" height="645" viewBox="0 0 537 258" font-family="Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 8 6" refX="8" refY="3"
+      markerWidth="4" markerHeight="3" orient="auto">
+      <path d="M0.5,0.5 L7,3 L0.5,5.5" fill="none" stroke="#94A3B8"
+        stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+    </marker>
+    <filter id="shadow" x="-6%" y="-8%" width="112%" height="128%">
+      <feDropShadow dx="0" dy="0.5" stdDeviation="0.8"
+        flood-color="#000" flood-opacity="0.05"/>
+    </filter>
+  </defs>
+  <rect width="537" height="258" fill="#F8F9FB" rx="3"/>
+  <text x="269" y="11" text-anchor="middle" font-size="6" font-weight="700" fill="#1E293B">Frontier Extensions (da5dce3)</text>
+  <rect x="194" y="16" width="150" height="10" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="199" y="18.5" width="5" height="5" rx="2.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <text x="207" y="22.5" font-size="3.5" fill="#1E293B">Actor</text>
+  <rect x="239" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="240" y="19.5" width="0.8" height="3" rx="0.4" fill="#3B82F6"/>
+  <text x="247" y="22.5" font-size="3.5" fill="#1E293B">Protocol</text>
+  <rect x="287" y="18.5" width="5" height="5" rx="1.5" fill="#fff" stroke="#E2E5EA" stroke-width="0.4"/>
+  <rect x="288" y="19.5" width="0.8" height="3" rx="0.4" fill="#F59E0B"/>
+  <text x="295" y="22.5" font-size="3.5" fill="#1E293B">External</text>
+  <rect x="80.7" y="146.0" width="306.1" height="40.0" rx="5" fill="#EDEEF2"/>
+  <text x="383.7" y="151.0" text-anchor="end" font-size="3.5" fill="#94A3B8" font-weight="500">In Scope: contracts/</text>
+  <path d="M107.0,46.0 C107.0,70.0 193.6,70.0 193.6,94.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M239.6,112.0 C246.2,130.0 255.0,130.0 261.6,114.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M323.8,114.0 C323.8,135.0 142.1,135.0 142.1,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M323.8,114.0 C323.8,135.0 319.9,135.0 319.9,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M319.9,156.0 C319.9,135.0 193.6,135.0 193.6,114.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M77.8,108.0 C77.8,132.0 142.1,132.0 142.1,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M457.6,108.0 C457.6,132.0 319.9,132.0 319.9,156.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M319.9,176.0 C319.9,197.0 342.7,197.0 342.7,218.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M319.9,176.0 C319.9,197.0 462.1,197.0 462.1,218.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M142.1,176.0 C142.1,197.0 196.3,197.0 196.3,218.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <path d="M319.9,176.0 C319.9,197.0 196.3,197.0 196.3,218.0" fill="none" stroke="#94A3B8" stroke-width="0.5" marker-end="url(#ah)"/>
+  <g filter="url(#shadow)">
+    <rect x="53.8" y="32.0" width="106.4" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="107.0" y="40.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Swapper</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="30.0" y="94.0" width="95.6" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="77.8" y="102.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Anyone / Reader</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="261.6" y="94.0" width="124.4" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="264.6" y="97.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="323.8" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">FactoryHook v1.1</text>
+    <text x="323.8" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">pinned per pool, out of scope</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="147.6" y="94.0" width="92.0" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="150.6" y="97.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="193.6" y="103.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">PoolManager</text>
+    <text x="193.6" y="108.5" text-anchor="middle" font-size="3.5" fill="#64748B">Uniswap V4 singleton</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="408.0" y="94.0" width="99.2" height="14" rx="7" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <text x="457.6" y="102.8" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Factory Owner</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="90.7" y="156.0" width="102.8" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="93.7" y="159.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="142.1" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">TwapObserver</text>
+    <text x="142.1" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">observer, per-pool ring</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="263.1" y="156.0" width="113.6" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="266.1" y="159.0" width="1.4" height="14" rx="0.6" fill="#3B82F6"/>
+    <text x="319.9" y="165.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">WthCorrector</text>
+    <text x="319.9" y="170.5" text-anchor="middle" font-size="3.5" fill="#64748B">last calculator + observer</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="137.7" y="218.0" width="117.2" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="140.7" y="221.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="196.3" y="227.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Frontier Core</text>
+    <text x="196.3" y="232.5" text-anchor="middle" font-size="3.5" fill="#64748B">BCTokenFactory, LM, BCToken</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="276.9" y="218.0" width="131.6" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="279.9" y="221.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="342.7" y="227.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">Partner Executor</text>
+    <text x="342.7" y="232.5" text-anchor="middle" font-size="3.5" fill="#64748B">owner-set, legs via PoolManager</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="430.5" y="218.0" width="63.2" height="20" rx="3" fill="#fff" stroke="#E2E5EA" stroke-width="0.5"/>
+    <rect x="433.5" y="221.0" width="1.4" height="14" rx="0.6" fill="#F59E0B"/>
+    <text x="462.1" y="227.5" text-anchor="middle" font-size="4.8" font-weight="600" fill="#1E293B">WETH</text>
+    <text x="462.1" y="232.5" text-anchor="middle" font-size="3.5" fill="#64748B">payout asset</text>
+  </g>
+  <rect x="143.5" y="65.0" width="13.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="150.3" y="70.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">swap</text>
+  <rect x="231.8" y="129.0" width="37.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="250.6" y="134.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">hook callbacks</text>
+  <rect x="206.9" y="122.0" width="52.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="232.9" y="127.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">notify, observe read</text>
+  <rect x="300.7" y="130.0" width="42.4" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="321.9" y="135.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">notify, quoteFee</text>
+  <rect x="238.0" y="138.0" width="37.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="256.8" y="143.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">settle, donate</text>
+  <rect x="89.9" y="127.0" width="40.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="109.9" y="132.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">record, consult</text>
+  <rect x="362.8" y="127.0" width="52.0" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="388.8" y="132.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">setExecutor, recover</text>
+  <rect x="310.1" y="192.0" width="42.4" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="331.3" y="197.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">executeArbitrage</text>
+  <rect x="378.2" y="192.0" width="25.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="391.0" y="197.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">wrap, pay</text>
+  <rect x="148.0" y="192.0" width="42.4" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="169.2" y="197.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">isLPd, hook gate</text>
+  <rect x="233.3" y="192.0" width="49.6" height="6.0" rx="1" fill="#F8F9FB"/>
+  <text x="258.1" y="197.0" font-size="4" fill="#1E293B" font-weight="500" text-anchor="middle">feeRecipient, owner</text>
+</svg>
