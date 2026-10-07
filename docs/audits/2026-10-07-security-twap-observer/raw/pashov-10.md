@@ -1,0 +1,6 @@
+LEAD | contract: WthCorrector | function: quoteFee | bug_class: band-start-price-unchecked | group_key: WthCorrector | quoteFee | band-start-price-unchecked
+seam: boundary×invariant
+code_smells: `quoteFee` checks only `params.sqrtPriceLimitX96` against `(LOWER_TSLOT, UPPER_TSLOT)`. It ignores the `int24` tick argument, which is the pre-leg tick of the executor leg. The band invariant says "a free leg only closes the gap the user's swap opened", but the code checks only where a leg ends and never where it starts. Trace for a user zeroForOne swap: band = (post, sqrt(refTick-1)). The executor first sends a same-direction leg that pays the normal fee and moves the price below `post`. It then sends an opposite exact-input leg with a limit in (post, edge). That leg returns 0 and crosses the region below `post` at the protocol floor only. Far side is safe: a leg with a start above `edge` and a limit below it reverts with PriceLimitAlreadyExceeded in V4. On the near side, LPs collect one fee for the round trip instead of two; no path found where the executor profits.
+description: The executor can get a free leg that starts outside the band, because `quoteFee` checks the leg limit and never the leg start tick. We did not find a sequence that gives the executor a profit or makes the LPs lose fees.
+
+Functions opened: 50

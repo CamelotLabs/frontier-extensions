@@ -1,0 +1,247 @@
+Warning: optimizer settings and `viaIR` have been disabled for accurate coverage reports.
+If you encounter "stack too deep" errors, consider using `--ir-minimum` which enables `viaIR` with minimum optimization resolving most of the errors.
+See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep
+Compiling 168 files with Solc 0.8.26
+Solc 0.8.26 finished in 1.64s
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
+Ran 5 tests for test/wth-corrector/PoolStatePrefix.t.sol:PoolStatePrefixTest
+[PASS] testFuzz_referenceTick_matchesTypedDecode(uint256,uint32) (runs: 256, μ: 347595, ~: 360287)
+[PASS] test_RevertWhen_prefixIsTooShort() (gas: 17390)
+[PASS] test_referenceTick_matchesTypedDecode_afterGraduation() (gas: 48719)
+[PASS] test_referenceTick_matchesTypedDecode_onAnUnregisteredPool() (gas: 45006)
+[PASS] test_referenceTick_matchesTypedDecode_throughSwaps() (gas: 817642)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 126.08ms (73.71ms CPU time)
+
+Ran 15 tests for test/wth-corrector/WthCorrectorHostile.t.sol:WthCorrectorHostileTest
+[PASS] test_RevertWhen_recoverERC20NotFromTheFactoryOwner() (gas: 17467)
+[PASS] test_RevertWhen_recoverERC20WithZeroAddresses() (gas: 31224)
+[PASS] test_coinOnlyPayment_isBelowTheMinimum() (gas: 565122)
+[PASS] test_env_hookFeeIsChargedOnAmountSpecifiedNotOnTheFill() (gas: 483326)
+[PASS] test_greedyPayingExecutor_stillSettles() (gas: 949939)
+[PASS] test_lpShare_followsInRangeLiquidity() (gas: 807513)
+[PASS] test_paidBackrun_standsAtTheFloor() (gas: 1129271)
+[PASS] test_recoverERC20_recoversStrayWeth() (gas: 89319)
+[PASS] test_recoverERC20_revertsDuringACorrection() (gas: 590058)
+[PASS] test_staleSync_isCaughtByTheSnapshot() (gas: 520502)
+[PASS] test_staleSync_leavesTheUserBuyIntact() (gas: 559864)
+[PASS] test_tailReserve_isKeptBackFromTheExecutor() (gas: 546282)
+[PASS] test_unpaidBackrun_isUnwound() (gas: 1049162)
+[PASS] test_wethPaymentWithStrayCoin_settlesAndIsRecoverable() (gas: 688579)
+[PASS] test_windowIsPerPool() (gas: 2453587)
+Suite result: ok. 15 passed; 0 failed; 0 skipped; finished in 1.27s (21.62ms CPU time)
+
+Ran 47 tests for test/twap-observer/TwapObserver.t.sol:TwapObserverTest
+[PASS] testFuzz_consult_binarySearchMatchesALinearScan(uint16,uint16,uint256,uint32) (runs: 256, μ: 10685558, ~: 11037362)
+[PASS] test_RevertWhen_boundAgainByTheHook() (gas: 27023)
+[PASS] test_RevertWhen_boundTwiceInOneDeploy() (gas: 1244286)
+[PASS] test_RevertWhen_configIsOutOfBoundsOrMalformed() (gas: 12944608)
+[PASS] test_RevertWhen_consultAfterTheRingForgot() (gas: 1944561)
+[PASS] test_RevertWhen_consultAnUnboundPool() (gas: 14063)
+[PASS] test_RevertWhen_consultAverageDoesNotFitATick() (gas: 79321)
+[PASS] test_RevertWhen_consultBeforeEnoughHistory() (gas: 82246)
+[PASS] test_RevertWhen_consultZeroSecondsAgo() (gas: 63763)
+[PASS] test_RevertWhen_growingAnUnboundPool() (gas: 12322)
+[PASS] test_RevertWhen_growthIsNotAnIncreaseOrAboveTheMaximum() (gas: 5487087)
+[PASS] test_RevertWhen_notificationsNotFromPoolHook() (gas: 39172)
+[PASS] test_RevertWhen_observationIndexIsNotBelowTheCount() (gas: 73140)
+[PASS] test_RevertWhen_recordBeforeGraduation() (gas: 1274832)
+[PASS] test_RevertWhen_recordOnAnUnboundPool() (gas: 13453)
+[PASS] test_RevertWhen_recordPastTheLastTimestampAnObservationHolds() (gas: 32357)
+[PASS] test_RevertWhen_registeredByAnyoneButTheHook() (gas: 19015)
+[PASS] test_consult_flatPriceEqualsTheTick() (gas: 76289)
+[PASS] test_consult_largeSwapRightBeforeTheReadBarelyMovesIt() (gas: 460317)
+[PASS] test_consult_picksTheNewestObservationAtLeastSecondsAgoOld() (gas: 2030077)
+[PASS] test_consult_roundsTowardNegativeInfinity() (gas: 86804)
+[PASS] test_consult_timeWeightsTheSwaps() (gas: 693807)
+[FAIL: consult: 46351 >= 38000] test_gas_consultOnA255SlotRing() (gas: 11164457)
+[FAIL: per slot: 23117 >= 23000] test_gas_increaseCardinalityPerSlot() (gas: 750203)
+[FAIL: no-op path: 6937 >= 5000] test_gas_onAfterSwapNoOpPath() (gas: 82101)
+[FAIL: overwrite price, not the fresh-slot price: 21843 >= 12000] test_gas_onAfterSwapRecordingIntoAPrewrittenSlot() (gas: 667803)
+[FAIL: recording path: 38850 >= 32000] test_gas_onAfterSwapRecordingPath() (gas: 113993)
+[PASS] test_gas_recordAndConsultOnAFullRing() (gas: 724921)
+[PASS] test_grow_beforeAnyObservation() (gas: 2383713)
+[PASS] test_grow_byAStranger() (gas: 124174)
+[PASS] test_grow_consultIsUnchangedByAGrowth() (gas: 3487056)
+[PASS] test_grow_keepsMoreHistory() (gas: 3922950)
+[PASS] test_grow_placeholdersAreNeverRead() (gas: 7936396)
+[PASS] test_grow_severalInARowAndWhilePending() (gas: 3568015)
+[PASS] test_grow_whileFullAndWrapped_appliesAtTheEndOfTheLap() (gas: 3636997)
+[PASS] test_grow_whileTheRingIsPartlyFilled() (gas: 2991832)
+[PASS] test_onFeeChange_storesNothing() (gas: 23015)
+[PASS] test_pools_stayIndependent() (gas: 2690242)
+[PASS] test_record_byAStrangerRespectsTheInterval() (gas: 127706)
+[PASS] test_register_acceptsTheBounds() (gas: 3678628)
+[PASS] test_register_bindsAConfigAndEmits() (gas: 1280687)
+[PASS] test_register_emptyConfigBindsTheDefaults() (gas: 34479)
+[PASS] test_ring_wrapsAndOverwritesTheOldest() (gas: 2016755)
+[PASS] test_swap_doesNotRecordBeforeTheInterval() (gas: 1005039)
+[PASS] test_swap_recordsTheFirstObservation() (gas: 397466)
+[PASS] test_swap_storesTheReadingTakenRightAfterTheSwap() (gas: 434456)
+[PASS] test_views_emptyRing() (gas: 23897)
+Suite result: FAILED. 42 passed; 5 failed; 0 skipped; finished in 1.31s (1.00s CPU time)
+
+Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
+  revertTo(uint256): replaced by `revertToState`
+  snapshot(): replaced by `snapshotState`
+Ran 51 tests for test/wth-corrector/WthCorrector.t.sol:WthCorrectorTest
+[PASS] testFuzz_payout_lpShareFromTheBinding(uint16,uint256) (runs: 256, μ: 2664951, ~: 2665524)
+[PASS] testFuzz_payout_sharesSumToThePayment(uint256) (runs: 256, μ: 860126, ~: 860862)
+[PASS] test_RevertWhen_configIsMalformed() (gas: 1181184)
+[PASS] test_RevertWhen_lpShareIsOutOfBounds() (gas: 2356916)
+[PASS] test_RevertWhen_minCorrectionGasIsNotAboveTheTailReserve() (gas: 54762)
+[PASS] test_RevertWhen_minPaymentIsZero() (gas: 49262)
+[PASS] test_RevertWhen_notificationsNotFromPoolHook() (gas: 21216)
+[PASS] test_RevertWhen_poolStatePrefixDoesNotNameTheCoin() (gas: 1353432)
+[PASS] test_RevertWhen_registeredByAnyoneButTheHook() (gas: 36490)
+[PASS] test_RevertWhen_registeredForAnUnknownPool() (gas: 48882)
+[PASS] test_RevertWhen_rolesDisagreeOnTheLpShare() (gas: 1272568)
+[PASS] test_RevertWhen_secondRoleRegisteredByAnotherHook() (gas: 1855572)
+[PASS] test_RevertWhen_tickSpacingDoesNotMatchThePool() (gas: 1184785)
+[PASS] test_band_buy_spansPostPriceToPreTickMinusOne() (gas: 464333)
+[PASS] test_band_emptyWhenTheSwapStaysInsideItsTick() (gas: 361836)
+[PASS] test_band_isZeroOutsideAWindow() (gas: 448746)
+[PASS] test_band_sell_spansPreTickPlusOneToPostPrice() (gas: 443675)
+[PASS] test_call_carriesThePoolKeyAndTheSplit() (gas: 486114)
+[PASS] test_constructor_rejectsZeroAddresses() (gas: 125026)
+[PASS] test_constructor_storesTheGates() (gas: 3329518)
+[PASS] test_executorRevert_revertsTheCorrectionAndKeepsTheSwap() (gas: 404597)
+[PASS] test_gas_fullCorrectionFitsTheObserverBudget() (gas: 1574286)
+[PASS] test_leg_atTheUpperEdge_paysTheNormalFee() (gas: 1093447)
+[PASS] test_leg_beyondTheBand_paysTheNormalFee() (gas: 1088683)
+[PASS] test_leg_exactOutput_paysTheNormalFee() (gas: 751379)
+[PASS] test_leg_inBand_paysTheFloor() (gas: 1069496)
+[PASS] test_leg_justAboveThePostPrice_paysTheFloor() (gas: 1046545)
+[PASS] test_leg_sameDirection_paysTheNormalFee() (gas: 714052)
+[PASS] test_leg_sell_inBandBuyBackPaysTheFloor() (gas: 718448)
+[PASS] test_lpNeutrality_inBandLegLeavesFeeGrowthUntouched() (gas: 1081909)
+[PASS] test_minCorrectionGas_skipsTheCall() (gas: 5542096)
+[PASS] test_minPayment_paymentAtTheMinimumSettles() (gas: 8776148)
+[PASS] test_minPayment_paymentBelowTheMinimumUnwindsTheLegs() (gas: 8749262)
+[PASS] test_minPayment_unpaidCorrectionUnwindsTheLegs() (gas: 8706918)
+[PASS] test_openDelta_revertsTheCorrectionAndKeepsTheSwap() (gas: 1060434)
+[PASS] test_outOfBandLeg_paysTheLps() (gas: 1092452)
+[PASS] test_pause_zeroExecutorSkipsTheCall() (gas: 357010)
+[PASS] test_payment_inNativeEth_isSplit() (gas: 863580)
+[PASS] test_payment_inWeth_isSplit() (gas: 861079)
+[PASS] test_payment_none_revertsTheCorrection() (gas: 437448)
+[PASS] test_payout_failedTransfer_revertsTheCorrection() (gas: 1539071)
+[PASS] test_payout_pendingSync_paysTheLpShareToTheRecipient() (gas: 1857150)
+[PASS] test_payout_zeroLiquidity_paysTheLpShareToTheRecipient() (gas: 824478)
+[PASS] test_quoteFee_isIdentityOutsideAWindow() (gas: 443442)
+[PASS] test_receive_rejectsEthOutsideACorrection() (gas: 15706)
+[PASS] test_register_acceptsTheLpShareBounds() (gas: 3816395)
+[PASS] test_register_bindsBothRolesAndPinsTheHook() (gas: 30951)
+[PASS] test_register_observerAlonePinsTheHook() (gas: 1860623)
+[PASS] test_register_writeOncePerRole() (gas: 27472)
+[PASS] test_selector_matchesThePartnerExecutor() (gas: 3842)
+[PASS] test_setExecutor_onlyFactoryOwner() (gas: 38305)
+Suite result: ok. 51 passed; 0 failed; 0 skipped; finished in 1.31s (525.76ms CPU time)
+
+Ran 4 tests for test/twap-observer/TwapObserverInvariant.t.sol:TwapObserverInvariantTest
+[PASS] invariant_cardinalitiesAreOrderedAndNeverDecrease() (runs: 48, calls: 1920, reverts: 0)
+
+╭-------------+----------+-------+---------+----------╮
+| Contract    | Selector | Calls | Reverts | Discards |
++=====================================================+
+| TwapHandler | buy      | 421   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | grow     | 384   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | record   | 379   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | sell     | 380   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | warp     | 356   | 0       | 0        |
+╰-------------+----------+-------+---------+----------╯
+
+[PASS] invariant_consultNeverReturnsASpanBelowSecondsAgo() (runs: 48, calls: 1920, reverts: 0)
+
+╭-------------+----------+-------+---------+----------╮
+| Contract    | Selector | Calls | Reverts | Discards |
++=====================================================+
+| TwapHandler | buy      | 421   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | grow     | 384   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | record   | 379   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | sell     | 380   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | warp     | 356   | 0       | 0        |
+╰-------------+----------+-------+---------+----------╯
+
+[PASS] invariant_keptObservationsAreTheLastRecordedInOrder() (runs: 48, calls: 1920, reverts: 0)
+
+╭-------------+----------+-------+---------+----------╮
+| Contract    | Selector | Calls | Reverts | Discards |
++=====================================================+
+| TwapHandler | buy      | 421   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | grow     | 384   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | record   | 379   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | sell     | 380   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | warp     | 356   | 0       | 0        |
+╰-------------+----------+-------+---------+----------╯
+
+[PASS] invariant_timestampsStrictlyIncreaseAlongTheRing() (runs: 48, calls: 1920, reverts: 0)
+
+╭-------------+----------+-------+---------+----------╮
+| Contract    | Selector | Calls | Reverts | Discards |
++=====================================================+
+| TwapHandler | buy      | 421   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | grow     | 384   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | record   | 379   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | sell     | 380   | 0       | 0        |
+|-------------+----------+-------+---------+----------|
+| TwapHandler | warp     | 356   | 0       | 0        |
+╰-------------+----------+-------+---------+----------╯
+
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 1.31s (4.30s CPU time)
+
+Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
+  revertTo(uint256): replaced by `revertToState`
+  snapshot(): replaced by `snapshotState`
+Ran 8 tests for test/twap-observer/TwapObserverAudit.t.sol:TwapObserverAuditTest
+[PASS] testFuzz_audit_growthNeverLosesNorReordersARecording(uint256,uint8) (runs: 32, μ: 687345569, ~: 696310461)
+[PASS] test_audit_consultGasWorstCaseAnyoneCanImpose() (gas: 40598756)
+[PASS] test_audit_greedyObserverListedFirstStarvesTheRing() (gas: 3677185)
+[PASS] test_audit_guaranteedReachIsCardinalityMinusOneIntervals() (gas: 3511986)
+[PASS] test_audit_hookWithoutObserveBindsThenStaysDead() (gas: 1330482)
+[PASS] test_audit_preGraduationTimeStaysOutOfTheAverage() (gas: 2164748)
+[PASS] test_audit_reachGapLastsUntilTheNextIntervalElapses() (gas: 2098733)
+[PASS] test_audit_swapperCannotDropADueObservationByGasLimiting() (gas: 301996086)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 47.83s (48.40s CPU time)
+
+Ran 6 test suites in 47.83s (53.16s CPU time): 125 tests passed, 5 failed, 0 skipped (130 total tests)
+
+╭------------------------------------------+-------------------+-------------------+-----------------+-----------------╮
+| File                                     | % Lines           | % Statements      | % Branches      | % Funcs         |
++======================================================================================================================+
+| contracts/twap-observer/TwapObserver.sol | 100.00% (91/91)   | 100.00% (134/134) | 100.00% (28/28) | 100.00% (13/13) |
+|------------------------------------------+-------------------+-------------------+-----------------+-----------------|
+| contracts/wth-corrector/WthCorrector.sol | 100.00% (151/151) | 99.53% (214/215)  | 97.06% (33/34)  | 100.00% (25/25) |
+|------------------------------------------+-------------------+-------------------+-----------------+-----------------|
+| Total                                    | 100.00% (242/242) | 99.71% (348/349)  | 98.39% (61/62)  | 100.00% (38/38) |
+╰------------------------------------------+-------------------+-------------------+-----------------+-----------------╯
+
+Failing tests:
+Encountered 5 failing tests in test/twap-observer/TwapObserver.t.sol:TwapObserverTest
+[FAIL: consult: 46351 >= 38000] test_gas_consultOnA255SlotRing() (gas: 11164457)
+[FAIL: per slot: 23117 >= 23000] test_gas_increaseCardinalityPerSlot() (gas: 750203)
+[FAIL: no-op path: 6937 >= 5000] test_gas_onAfterSwapNoOpPath() (gas: 82101)
+[FAIL: overwrite price, not the fresh-slot price: 21843 >= 12000] test_gas_onAfterSwapRecordingIntoAPrewrittenSlot() (gas: 667803)
+[FAIL: recording path: 38850 >= 32000] test_gas_onAfterSwapRecordingPath() (gas: 113993)
+
+Encountered a total of 5 failing tests, 125 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 5 failed tests
+cov exit 1

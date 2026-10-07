@@ -1,0 +1,74 @@
+'forge clean' running (wd: <frontier-extensions checkout>)
+'forge config --json' running
+'forge build --build-info --skip ./test/** ./script/** --force' running (wd: <frontier-extensions checkout>)
+
+Detector: incorrect-equality
+WthCorrector._pay(address,uint256) (contracts/wth-corrector/WthCorrector.sol#370-373) uses a dangerous strict equality:
+	- amount == 0 (contracts/wth-corrector/WthCorrector.sol#371)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dangerous-strict-equalities
+
+Detector: uninitialized-local
+WthCorrector._openWindow(PoolId,bool).lower (contracts/wth-corrector/WthCorrector.sol#279) is a local variable never initialized
+WthCorrector._openWindow(PoolId,bool).upper (contracts/wth-corrector/WthCorrector.sol#280) is a local variable never initialized
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#uninitialized-local-variables
+
+Detector: unused-return
+WthCorrector._openWindow(PoolId,bool) (contracts/wth-corrector/WthCorrector.sol#274-291) ignores return value by (post,None,None,None) = POOL_MANAGER.getSlot0(poolId) (contracts/wth-corrector/WthCorrector.sol#275)
+WthCorrector._payout(PoolId,IWthCorrector.PoolBinding,uint256,uint256) (contracts/wth-corrector/WthCorrector.sol#343-367) ignores return value by POOL_MANAGER.settle{value: lpAmount}() (contracts/wth-corrector/WthCorrector.sol#359)
+WthCorrector._payout(PoolId,IWthCorrector.PoolBinding,uint256,uint256) (contracts/wth-corrector/WthCorrector.sol#343-367) ignores return value by POOL_MANAGER.donate(_poolKey(binding.coin,binding.tickSpacing,msg.sender),lpAmount,0,) (contracts/wth-corrector/WthCorrector.sol#360)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+
+Detector: missing-zero-check
+WthCorrector.setExecutor(address).newExecutor (contracts/wth-corrector/WthCorrector.sol#133) lacks a zero-check on :
+		- executor = newExecutor (contracts/wth-corrector/WthCorrector.sol#136)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#missing-zero-address-validation
+
+Detector: reentrancy-events
+Reentrancy in WthCorrector._payout(PoolId,IWthCorrector.PoolBinding,uint256,uint256) (contracts/wth-corrector/WthCorrector.sol#343-367):
+	External calls:
+	- IWETH(WETH).withdraw(lpAmount - nativeHeld) (contracts/wth-corrector/WthCorrector.sol#355)
+	- POOL_MANAGER.settle{value: lpAmount}() (contracts/wth-corrector/WthCorrector.sol#359)
+	- POOL_MANAGER.donate(_poolKey(binding.coin,binding.tickSpacing,msg.sender),lpAmount,0,) (contracts/wth-corrector/WthCorrector.sol#360)
+	- IWETH(WETH).deposit{value: nativeHeld}() (contracts/wth-corrector/WthCorrector.sol#362)
+	- _pay(recipient,recipientAmount) (contracts/wth-corrector/WthCorrector.sol#365)
+		- ! IWETH(WETH).transfer(to,amount) (contracts/wth-corrector/WthCorrector.sol#372)
+	External calls sending eth:
+	- POOL_MANAGER.settle{value: lpAmount}() (contracts/wth-corrector/WthCorrector.sol#359)
+	- IWETH(WETH).deposit{value: nativeHeld}() (contracts/wth-corrector/WthCorrector.sol#362)
+	Event emitted after the call(s):
+	- CorrectionSettled(poolId,received,lpAmount,recipientAmount) (contracts/wth-corrector/WthCorrector.sol#366)
+Reentrancy in WthCorrector.recoverERC20(address,address,uint256) (contracts/wth-corrector/WthCorrector.sol#140-146):
+	External calls:
+	- IERC20(token).safeTransfer(to,amount) (contracts/wth-corrector/WthCorrector.sol#144)
+	Event emitted after the call(s):
+	- TokensRecovered(token,to,amount) (contracts/wth-corrector/WthCorrector.sol#145)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-4
+
+Detector: assembly
+WthCorrector._callExecutor(address,IWthCorrector.PoolBinding) (contracts/wth-corrector/WthCorrector.sol#253-270) uses assembly
+	- INLINE ASM (contracts/wth-corrector/WthCorrector.sol#265-269)
+WthCorrector._poolStatePrefix(address,PoolId) (contracts/wth-corrector/WthCorrector.sol#301-318) uses assembly
+	- INLINE ASM (contracts/wth-corrector/WthCorrector.sol#309-316)
+WthCorrector._tload(bytes32) (contracts/wth-corrector/WthCorrector.sol#392-396) uses assembly
+	- INLINE ASM (contracts/wth-corrector/WthCorrector.sol#393-395)
+WthCorrector._tstore(bytes32,uint256) (contracts/wth-corrector/WthCorrector.sol#399-403) uses assembly
+	- INLINE ASM (contracts/wth-corrector/WthCorrector.sol#400-402)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#assembly-usage
+
+Detector: naming-convention
+Function IWthCorrector.ROLE_CALCULATOR() (contracts/wth-corrector/IWthCorrector.sol#105) is not in mixedCase
+Function IWthCorrector.ROLE_OBSERVER() (contracts/wth-corrector/IWthCorrector.sol#111) is not in mixedCase
+Function IWthCorrector.POOL_MANAGER() (contracts/wth-corrector/IWthCorrector.sol#117) is not in mixedCase
+Function IWthCorrector.WETH() (contracts/wth-corrector/IWthCorrector.sol#123) is not in mixedCase
+Function IWthCorrector.MIN_LP_SHARE_BPS() (contracts/wth-corrector/IWthCorrector.sol#129) is not in mixedCase
+Function IWthCorrector.CREATOR_BPS() (contracts/wth-corrector/IWthCorrector.sol#136) is not in mixedCase
+Function IWthCorrector.MIN_CORRECTION_GAS() (contracts/wth-corrector/IWthCorrector.sol#142) is not in mixedCase
+Function IWthCorrector.MIN_PAYMENT_WEI() (contracts/wth-corrector/IWthCorrector.sol#148) is not in mixedCase
+Function IWthCorrector.TAIL_RESERVE() (contracts/wth-corrector/IWthCorrector.sol#154) is not in mixedCase
+Variable WthCorrector.POOL_MANAGER (contracts/wth-corrector/WthCorrector.sol#86) is not in mixedCase
+Variable WthCorrector.WETH (contracts/wth-corrector/WthCorrector.sol#89) is not in mixedCase
+Variable WthCorrector.MIN_CORRECTION_GAS (contracts/wth-corrector/WthCorrector.sol#92) is not in mixedCase
+Variable WthCorrector.MIN_PAYMENT_WEI (contracts/wth-corrector/WthCorrector.sol#95) is not in mixedCase
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions
+. analyzed (43 contracts with 101 detectors), 26 result(s) found
+slither exit 255
