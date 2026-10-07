@@ -308,7 +308,7 @@ Rejected, with the gate that blocked each:
 - The first Pashov scan (full scope) gave no finding or lead on `TwapObserver`, so a second Pashov scan in filename mode covered `TwapObserver.sol` and `ITwapObserver.sol` alone.
 - Upstream `solidity-auditor` is at 4.1. The vendored skill is at 4.
 - The copies of the assembled Pashov reports and run files are verbatim. Their em dashes come from the vendored assembler format.
-- `.gitignore` now lists the local pipeline output (`.solidity-auditor/`, `.audit-*/`, `x-ray/`), so a later run leaves the tree clean.
+- `.gitignore` now lists the root-level tool output (`.solidity-auditor/`, `.audit-*/`, `x-ray/`, Slither, Aderyn and coverage files), so a later run leaves the tree clean.
 - PoCs: every agent PoC was re-run in one isolated copy at `da5dce3` with `FOUNDRY_OFFLINE=true forge test --match-path 'test/poc/**'`: 342 passed, 2 failed (agent 6's single-hop probes, which fail as the agent predicted). To re-run, copy a PoC folder to `test/poc/` of a checkout. The imports expect `test/wth-corrector/` two levels up.
 
 ### B. Static Analysis Output
