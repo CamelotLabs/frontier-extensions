@@ -1,5 +1,0 @@
-name	frontier-extensions
-mode	filename
-files	./contracts/twap-observer/TwapObserver.sol ./contracts/twap-observer/ITwapObserver.sol
-passes_planned	1
-pass_1_agents	12/12

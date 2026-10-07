@@ -1,9 +1,0 @@
-LEAD | contract: WthCorrector | function: quoteFee | bug_class: lp-fee-diversion | group_key: WthCorrector | quoteFee | lp-fee-diversion
-code_smells: In the band, `quoteFee` returns 0, so the hook charges only `PROTOCOL_FLOOR_PIPS` on the executor legs. The LP rate and the staking vault share on those legs are zero (FactoryHook `_beforeSwap`, `_distributeFee`). As compensation, LPs get only `lpShareBps * 8000 / 1e8` of the executor profit, which can be 20 %, and the staking vault gets nothing. Approximate example: the step fee is 1 % with 80 % to LPs, the user swap moves the price 2 %, and the zero-fee correction is 10 ETH. The profit is about 0.1 ETH, so the LPs get 0.02 ETH at `lpShareBps` 2500. A normal arbitrage with a 1 % fee would pay the LPs about 0.04 ETH.
-description: The creator sets `lpShareBps` to 2500, so the fee recipient gets income that LPs and stakers earned before. We did not model the exact counterfactual arbitrage volume.
-
-LEAD | contract: WthCorrector | function: _payout | bug_class: jit-donation-capture | group_key: WthCorrector | _payout | jit-donation-capture
-code_smells: `_payout` calls `POOL_MANAGER.donate(key, lpAmount, 0, "")` once, to the liquidity that is in range at the price where the executor stops. The FactoryHook liquidity flags are off, so any third party can add liquidity in one narrow range just before the donation and remove it just after. If the attacker also sends the trigger swap, the attack loses money: the attacker pays the executor profit plus fees and gets back at most `lpShareBps * 0.8` of that profit. To profit, the attacker must place transactions before and after the swap of another user on Robinhood Chain.
-description: A JIT LP that adds liquidity before the swap of a victim takes most of the donation from the passive LPs. We did not prove that an attacker can order transactions on the sequencer.
-
-Functions opened: 48
