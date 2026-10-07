@@ -1,5 +1,0 @@
-LEAD | contract: TwapObserver | function: record | bug_class: uninitialized-oracle-read | group_key: TwapObserver | record | uninitialized-oracle-read
-code_smells: `record` uses `isLPd()` as its only gate (L122). It does not check that the hook initialized the pool. Before `_afterInitialize` (FactoryHook.sol:435-442) runs, `observe` returns `0 + 0 * (block.timestamp - 0) = 0`, so `record` stores `(now, 0)`. `_afterInitialize` then sets `lastSwapTimestamp = now` without moving `tickCumulative`, so every block between that recording and initialization counts as tick 0 in a later `consult`. The bind path `registerPool` runs before initialization and calls the creator's other extensions, one of which can call `record` then.
-description: Any caller can store an observation before the hook initializes the pool, so the average counts that gap as tick 0. We did not confirm that `isLPd()` can be true across blocks before initialization (liquidity manager source not in the repo).
-
-Functions opened: 23

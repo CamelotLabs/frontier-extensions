@@ -26,12 +26,15 @@ All five Medium findings and both Low findings are in `WthCorrector`. Thirty-six
 | Output | Where |
 |---|---|
 | X-ray readiness report, entry points, invariant map, diagram | [`x-ray/`](2026-10-07-security-twap-observer/x-ray/x-ray.md) |
-| Pashov report, full scope, with severity annex | [`pashov/full-scope/`](2026-10-07-security-twap-observer/pashov/full-scope/full-report.md), [annex](2026-10-07-security-twap-observer/pashov/full-scope/severity-annex.md) |
-| Pashov report, `TwapObserver` only | [`pashov/twap-observer/`](2026-10-07-security-twap-observer/pashov/twap-observer/full-report.md) |
-| Simao report and money map | [`simao-report.md`](2026-10-07-security-twap-observer/simao-report.md), [`simao-money-map.md`](2026-10-07-security-twap-observer/simao-money-map.md) |
-| Raw output of all 36 agents | [`raw/`](2026-10-07-security-twap-observer/raw/) |
-| PoC tests (Foundry) | [`poc/`](2026-10-07-security-twap-observer/poc/) |
-| Pre-flight tool output | [`pre-flight/`](2026-10-07-security-twap-observer/pre-flight/) |
+| PoC tests (Foundry), one per cited proof | [`poc/`](2026-10-07-security-twap-observer/poc/) |
+
+This file merges the three pipeline reports:
+
+- Pashov, full scope: 6 findings, 6 leads.
+- Pashov, `TwapObserver` only: 0 findings, 1 lead.
+- Simao: 4 Medium, 2 Low, 6 leads.
+
+The intermediate pipeline files, the raw agent output and the tool logs are not kept in the repository.
 
 ## 2. Scope
 
@@ -106,7 +109,7 @@ The user's whole transaction reverts with `CurrencyNotSettled` on every multi-ho
 The digest proves that the count is unchanged, not that every delta is unchanged. The PoolManager cannot list all deltas, so a count-plus-known-slots digest cannot detect a pair of changes on two unknown addresses.
 
 ### Proof of Concept
-All pass: [`poc/pashov-7/DigestBypass.t.sol`](2026-10-07-security-twap-observer/poc/pashov-7/DigestBypass.t.sol), [`poc/simao-9/DigestShuffle.t.sol`](2026-10-07-security-twap-observer/poc/simao-9/DigestShuffle.t.sol), [`poc/pashov-4/ResyncPoC.t.sol`](2026-10-07-security-twap-observer/poc/pashov-4/ResyncPoC.t.sol), [`poc/simao-5/ReservesPoC.t.sol`](2026-10-07-security-twap-observer/poc/simao-5/ReservesPoC.t.sol) (`test_poc_topUpRouter_userLosesCoinIn`), and the variants of agents 5, 6 and 8.
+All pass: [`poc/pashov-7/DigestBypass.t.sol`](2026-10-07-security-twap-observer/poc/pashov-7/DigestBypass.t.sol), [`poc/simao-9/DigestShuffle.t.sol`](2026-10-07-security-twap-observer/poc/simao-9/DigestShuffle.t.sol), [`poc/pashov-4/ResyncPoC.t.sol`](2026-10-07-security-twap-observer/poc/pashov-4/ResyncPoC.t.sol), [`poc/simao-5/ReservesPoC.t.sol`](2026-10-07-security-twap-observer/poc/simao-5/ReservesPoC.t.sol) (`test_poc_topUpRouter_userLosesCoinIn`). Three more agents proved the same bypass with variants of these.
 
 ### Recommendation
 1. Return from `onAfterSwap` when `exttload(CURRENCY_SLOT) != 0`. This closes the presync mechanisms and F-02.
@@ -309,16 +312,16 @@ Rejected, with the gate that blocked each:
 - Upstream `solidity-auditor` is at 4.1. The vendored skill is at 4.
 - The copies of the assembled Pashov reports and run files are verbatim. Their em dashes come from the vendored assembler format.
 - `.gitignore` now lists the root-level tool output (`.solidity-auditor/`, `.audit-*/`, `x-ray/`, Slither, Aderyn and coverage files), so a later run leaves the tree clean.
-- PoCs: every agent PoC was re-run in one isolated copy at `da5dce3` with `FOUNDRY_OFFLINE=true forge test --match-path 'test/poc/**'`: 342 passed, 2 failed (agent 6's single-hop probes, which fail as the agent predicted). To re-run, copy a PoC folder to `test/poc/` of a checkout. The imports expect `test/wth-corrector/` two levels up.
+- PoCs: every agent PoC (12 files, the 8 kept here and 4 that repeat F-01) was re-run in one isolated copy at `da5dce3` with `FOUNDRY_OFFLINE=true forge test --match-path 'test/poc/**'`: 342 passed, 2 failed (agent 6's single-hop probes, which fail as the agent predicted). To re-run, copy a PoC folder to `test/poc/` of a checkout. The imports expect `test/wth-corrector/` two levels up.
 
 ### B. Static Analysis Output
 
-[`pre-flight/slither.txt`](2026-10-07-security-twap-observer/pre-flight/slither.txt), [`pre-flight/aderyn.md`](2026-10-07-security-twap-observer/pre-flight/aderyn.md). Aderyn 0.1.9 wrote its report and then stopped on a version parse error.
+Slither (`--filter-paths "test|script|lib"`): 26 results. 0 High, 6 Medium and 3 Low, all triaged as by design. The rest are informational. Aderyn 0.1.9: 2 High (the cast at `WthCorrector.sol:296`, and "locks Ether", see I-04) and 4 Low. Aderyn wrote its report and then stopped on a version parse error.
 
 ### C. Test Coverage
 
-[`pre-flight/coverage.txt`](2026-10-07-security-twap-observer/pre-flight/coverage.txt). Under coverage instrumentation 5 gas-ceiling tests fail, which is expected for an unoptimized build.
+`forge coverage --code-size-limit 1000000`: 100% lines (242/242), 99.71% statements, 98.39% branches (61/62). `TwapObserver` is at 100% on all four. Under coverage instrumentation 5 gas-ceiling tests fail, which is expected for an unoptimized build.
 
 ### D. Contract sizes
 
-[`pre-flight/sizes.txt`](2026-10-07-security-twap-observer/pre-flight/sizes.txt): `TwapObserver` 6,547 B, `WthCorrector` 10,280 B runtime.
+`forge build --sizes`: `TwapObserver` 6,547 B, `WthCorrector` 10,280 B runtime.
