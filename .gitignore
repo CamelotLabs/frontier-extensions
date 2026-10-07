@@ -4,3 +4,8 @@ broadcast/
 .env
 .env.*
 !.env.example
+
+# local audit tooling output (solidity-auditor runs, pipeline bundles, x-ray drafts)
+/.solidity-auditor/
+/.audit-*/
+/x-ray/
