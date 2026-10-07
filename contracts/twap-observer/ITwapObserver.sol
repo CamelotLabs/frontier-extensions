@@ -137,8 +137,8 @@ interface ITwapObserver is IHookObserver {
     // slither-disable-end naming-convention
 
     /**
-     * @notice Stores the hook's current reading for a bound, graduated pool if at least `interval` seconds
-     * passed since its newest observation; does nothing otherwise. Open to anyone.
+     * @notice Stores the hook's current reading if at least `interval` seconds passed since the pool's newest
+     * observation, and returns false otherwise. Open to anyone; reverts on an unbound or ungraduated pool.
      * @param poolId The V4 pool id.
      * @return recorded Whether an observation was stored.
      */
