@@ -23,6 +23,8 @@ match_path = "test/fork/**"
 
 [rpc_endpoints]
 robinhood = "https://rpc.mainnet.chain.robinhood.com"
+robinhood_public = "https://robinhood.rpc.blxrbdn.com"
+arbitrum_sepolia = "https://sepolia-rollup.arbitrum.io/rpc"
 
 [lint]
 lint_on_build = false

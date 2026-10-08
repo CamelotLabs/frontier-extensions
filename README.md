@@ -24,7 +24,7 @@ FOUNDRY_PROFILE=fork forge test     # live: against Robinhood Chain (in CI: the 
 | Extension | Roles | Status |
 |---|---|---|
 | [`WthCorrector`](contracts/wth-corrector/WthCorrector.sol) | fee calculator + after-swap observer | not deployed |
-| [`TwapObserver`](contracts/twap-observer/TwapObserver.sol) | after-swap observer | not deployed |
+| [`TwapObserver`](contracts/twap-observer/TwapObserver.sol) | after-swap observer | deployed, `twap-observer/v1.0.0` |
 
 ### WthCorrector
 
@@ -157,9 +157,16 @@ Import paths: `kit/…` for the kit (`kit/HookGated.sol`), `frontier/…` for th
 
 ## Versioning and deployments
 
-Each extension is tagged on its own: `wth-corrector/v1.0.0`, and so on. Once an extension is
-deployed, its addresses live in `deployments/<extension>/<chainId>.json`, one file per chain.
-Nothing is deployed yet.
+Each extension is tagged on its own: `twap-observer/v1.0.0`, `wth-corrector/v1.0.0`, and so on.
+Deployed addresses are listed below, one line per extension and chain. Deploy scripts live in
+[`script/`](script/) and pick the chain's `BCTokenFactory` by chain id.
+
+| Extension | Chain | Address | Tag |
+|---|---|---|---|
+| `TwapObserver` | Robinhood Chain (4663) | [`0xC2f8516564D25F76f6E838A1798682D6B9EEc158`](https://robinscan.io/address/0xC2f8516564D25F76f6E838A1798682D6B9EEc158) | `twap-observer/v1.0.0` |
+| `TwapObserver` | Arbitrum Sepolia (421614) | [`0xdFDc85f355bB593b9092aa308AA2A8b12a455F6e`](https://sepolia.arbiscan.io/address/0xdFDc85f355bB593b9092aa308AA2A8b12a455F6e) | `twap-observer/v1.0.0` |
+
+Both are verified on Sourcify.
 
 ## License
 
