@@ -163,7 +163,7 @@ Deployed addresses are listed below, one line per extension and chain. Deploy sc
 
 | Extension | Chain | Address | Tag |
 |---|---|---|---|
-| `TwapObserver` | Robinhood Chain (4663) | [`0xC2f8516564D25F76f6E838A1798682D6B9EEc158`](https://robinscan.io/address/0xC2f8516564D25F76f6E838A1798682D6B9EEc158) | `twap-observer/v1.0.0` |
+| `TwapObserver` | Robinhood Chain (4663) | [`0xC2f8516564D25F76f6E838A1798682D6B9EEc158`](https://robinhoodchain.blockscout.com/address/0xC2f8516564D25F76f6E838A1798682D6B9EEc158) | `twap-observer/v1.0.0` |
 | `TwapObserver` | Arbitrum Sepolia (421614) | [`0xdFDc85f355bB593b9092aa308AA2A8b12a455F6e`](https://sepolia.arbiscan.io/address/0xdFDc85f355bB593b9092aa308AA2A8b12a455F6e) | `twap-observer/v1.0.0` |
 
 Both are verified on Sourcify.
