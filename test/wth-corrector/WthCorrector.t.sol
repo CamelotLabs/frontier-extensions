@@ -41,6 +41,7 @@ contract WthCorrectorTest is ExtensionCampaignBase {
     uint24 internal constant BASE_FEE = 3000;
     uint24 internal constant FLOOR_FEE = 300;
     uint16 internal constant LP_BPS = 3000;
+    uint8 internal constant PROTOCOL_RATIO = 25;
     uint256 internal constant MIN_GAS = 250_000;
     uint256 internal constant PAYMENT = 1e15;
     uint256 internal constant USER_BUY = 0.3 ether;
@@ -56,8 +57,10 @@ contract WthCorrectorTest is ExtensionCampaignBase {
 
     function setUp() public override {
         super.setUp();
+        vm.prank(users.owner);
+        hook.setProtocolFeeRatio(PROTOCOL_RATIO);
         corrector = new WthCorrector(address(factory), poolManager, address(weth), MIN_GAS, 1);
-        (wCoin, pid) = _deployBound(address(corrector), _config(TICK_SPACING, LP_BPS), _config(TICK_SPACING, LP_BPS));
+        (wCoin, pid) = _deployBound(address(corrector), LP_BPS);
         key = _poolKey(address(wCoin));
         recipient = wCoin.getFeeRecipient();
 
@@ -81,24 +84,39 @@ contract WthCorrectorTest is ExtensionCampaignBase {
     // Helpers
     // ---------------------------------------------------------------------------------------------
 
-    function _config(int24 tickSpacing, uint16 lpShareBps) internal pure returns (bytes memory) {
-        return abi.encode(tickSpacing, lpShareBps);
+    function _config(int24 tickSpacing) internal pure returns (bytes memory) {
+        return abi.encode(tickSpacing);
+    }
+
+    /// @dev The split the corrector owes on `payment` for a pool at `lpShareBps` under `PROTOCOL_RATIO`.
+    function _split(uint256 payment, uint16 lpShareBps)
+        internal
+        pure
+        returns (uint256 protocolAmount, uint256 lpAmount, uint256 recipientAmount)
+    {
+        protocolAmount = payment * PROTOCOL_RATIO / 100;
+        lpAmount = (payment - protocolAmount) * lpShareBps / 10_000;
+        recipientAmount = payment - protocolAmount - lpAmount;
+    }
+
+    /// @dev A 13-word `getPoolState` answer: the offset word, then head words 0 (`coin`), 1 (`registered`),
+    /// the rest zero.
+    function _prefix(address coin, uint256 registered) internal pure returns (bytes memory) {
+        return abi.encodePacked(uint256(32), uint256(uint160(coin)), registered, new bytes(10 * 32));
     }
 
     function _noStaking() internal pure returns (IBCTokenFactory.StakingConfig memory) {
         return IBCTokenFactory.StakingConfig({deployStaking: false, alternativeFeeRecipient: address(0)});
     }
 
-    /// @dev A graduated coin binding `target` as its only calculator and as an after-swap observer.
-    function _deployBound(address target, bytes memory calcConfig, bytes memory obsConfig)
-        internal
-        returns (MockBCToken deployed, PoolId poolId)
-    {
-        return _deployGraduated(
-            HookPayload.withFee(BASE_FEE).addCalculator(target, calcConfig)
-                .addObserver(target, HookPayload.CALL_AFTER_SWAP, obsConfig),
-            false
-        );
+    /// @dev A graduated coin at `lpShareBps` binding `target` as its only calculator and as an after-swap
+    /// observer.
+    function _deployBound(address target, uint16 lpShareBps) internal returns (MockBCToken deployed, PoolId poolId) {
+        IFactoryHook.HookConfigV2 memory config = HookPayload.withFee(BASE_FEE)
+            .addCalculator(target, _config(TICK_SPACING))
+            .addObserver(target, HookPayload.CALL_AFTER_SWAP, _config(TICK_SPACING));
+        config.lpShareBps = lpShareBps;
+        return _deployGraduated(config, false);
     }
 
     /// @dev A plain (hookless) v4 pool on the same pair, opened at the Frontier pool's price with
@@ -217,7 +235,6 @@ contract WthCorrectorTest is ExtensionCampaignBase {
         uint256 minGas = corrector.TAIL_RESERVE() + 1;
         WthCorrector c = new WthCorrector(address(factory), poolManager, address(weth), minGas, 2);
         assertEq(c.CREATOR_BPS(), 8000, "creator bps");
-        assertEq(c.MIN_LP_SHARE_BPS(), 2500, "min lp share");
         assertEq(c.MIN_CORRECTION_GAS(), minGas, "min gas");
         assertEq(c.MIN_PAYMENT_WEI(), 2, "min payment");
     }
@@ -241,7 +258,7 @@ contract WthCorrectorTest is ExtensionCampaignBase {
         IWthCorrector.PoolBinding memory b = corrector.bindingOf(pid);
         assertEq(b.coin, address(wCoin), "coin");
         assertEq(b.tickSpacing, TICK_SPACING, "tick spacing");
-        assertEq(b.lpShareBps, LP_BPS, "lp share");
+        assertEq(b.lpShareBps, LP_BPS, "lp share from the hook");
         assertEq(b.roles, corrector.ROLE_CALCULATOR() | corrector.ROLE_OBSERVER(), "both roles");
         assertEq(corrector.hookOf(pid), address(hook), "pinned hook");
     }
@@ -249,7 +266,7 @@ contract WthCorrectorTest is ExtensionCampaignBase {
     function test_register_observerAlonePinsTheHook() public {
         (, PoolId other) = _deployGraduated(
             HookPayload.withFee(BASE_FEE)
-                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, _config(TICK_SPACING, LP_BPS)),
+                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, _config(TICK_SPACING)),
             false
         );
         assertEq(corrector.bindingOf(other).roles, corrector.ROLE_OBSERVER(), "observer only");
@@ -259,39 +276,39 @@ contract WthCorrectorTest is ExtensionCampaignBase {
     function test_RevertWhen_registeredByAnyoneButTheHook() public {
         PoolId fresh = PoolId.wrap(keccak256("a pool id computed before its coin exists"));
         vm.expectRevert(abi.encodeWithSelector(HookGated.NotCurrentHook.selector, address(this)));
-        corrector.onRegisterCalculator(fresh, _config(TICK_SPACING, LP_BPS));
+        corrector.onRegisterCalculator(fresh, _config(TICK_SPACING));
         vm.expectRevert(abi.encodeWithSelector(HookGated.NotCurrentHook.selector, address(this)));
-        corrector.onRegisterObserver(fresh, _config(TICK_SPACING, LP_BPS));
+        corrector.onRegisterObserver(fresh, _config(TICK_SPACING));
     }
 
     function test_RevertWhen_secondRoleRegisteredByAnotherHook() public {
         (, PoolId other) = _deployGraduated(
             HookPayload.withFee(BASE_FEE)
-                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, _config(TICK_SPACING, LP_BPS)),
+                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, _config(TICK_SPACING)),
             false
         );
         vm.expectRevert(abi.encodeWithSelector(HookGated.NotPoolHook.selector, address(this)));
-        corrector.onRegisterCalculator(other, _config(TICK_SPACING, LP_BPS));
+        corrector.onRegisterCalculator(other, _config(TICK_SPACING));
     }
 
     function test_register_writeOncePerRole() public {
         vm.startPrank(address(hook));
         vm.expectRevert(IWthCorrector.RoleAlreadyBound.selector);
-        corrector.onRegisterCalculator(pid, _config(TICK_SPACING, LP_BPS));
+        corrector.onRegisterCalculator(pid, _config(TICK_SPACING));
         vm.expectRevert(IWthCorrector.RoleAlreadyBound.selector);
-        corrector.onRegisterObserver(pid, _config(TICK_SPACING, LP_BPS));
+        corrector.onRegisterObserver(pid, _config(TICK_SPACING));
         vm.stopPrank();
     }
 
     function test_RevertWhen_registeredForAnUnknownPool() public {
         vm.prank(address(hook));
         vm.expectRevert(IWthCorrector.InvalidPoolConfig.selector);
-        corrector.onRegisterCalculator(PoolId.wrap(keccak256("unknown")), _config(TICK_SPACING, LP_BPS));
+        corrector.onRegisterCalculator(PoolId.wrap(keccak256("unknown")), _config(TICK_SPACING));
     }
 
     function test_RevertWhen_tickSpacingDoesNotMatchThePool() public {
         IFactoryHook.HookConfigV2 memory config =
-            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), _config(TICK_SPACING * 2, LP_BPS));
+            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), _config(TICK_SPACING * 2));
         MockBCToken token = _newCoin("Wrong Spacing", "BAD");
 
         vm.expectRevert(IWthCorrector.InvalidPoolConfig.selector);
@@ -306,70 +323,24 @@ contract WthCorrectorTest is ExtensionCampaignBase {
         _registerCoin(token, 50, _noStaking(), HookPayload.encode(config));
     }
 
-    function test_register_acceptsTheLpShareBounds() public {
-        (, PoolId low) = _deployBound(address(corrector), _config(TICK_SPACING, 2500), _config(TICK_SPACING, 2500));
-        assertEq(corrector.bindingOf(low).lpShareBps, 2500, "minimum");
-        (, PoolId high) = _deployBound(address(corrector), _config(TICK_SPACING, 10_000), _config(TICK_SPACING, 10_000));
-        assertEq(corrector.bindingOf(high).lpShareBps, 10_000, "whole");
-    }
-
-    function test_RevertWhen_lpShareIsOutOfBounds() public {
-        MockBCToken token = _newCoin("Low Share", "BAD");
-        vm.expectRevert(IWthCorrector.InvalidShares.selector);
-        _registerCoin(
-            token,
-            50,
-            _noStaking(),
-            HookPayload.encode(
-                HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), _config(TICK_SPACING, 2499))
-            )
-        );
-
-        token = _newCoin("High Share", "BAD");
-        vm.expectRevert(IWthCorrector.InvalidShares.selector);
-        _registerCoin(
-            token,
-            50,
-            _noStaking(),
-            HookPayload.encode(
-                HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), _config(TICK_SPACING, 10_001))
-            )
-        );
-    }
-
-    function test_RevertWhen_rolesDisagreeOnTheLpShare() public {
-        MockBCToken token = _newCoin("Split Config", "BAD");
-        vm.expectRevert(IWthCorrector.InvalidPoolConfig.selector);
-        _registerCoin(
-            token,
-            50,
-            _noStaking(),
-            HookPayload.encode(
-                HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), _config(TICK_SPACING, 3000))
-                    .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, _config(TICK_SPACING, 4000))
-            )
-        );
+    function testFuzz_register_readsTheLpShareFromTheHook(uint16 lpShareBps) public {
+        lpShareBps = uint16(bound(lpShareBps, 0, 10_000));
+        (, PoolId other) = _deployBound(address(corrector), lpShareBps);
+        assertEq(corrector.bindingOf(other).lpShareBps, hook.getPoolState(other).lpShareBps, "the hook's share");
+        assertEq(corrector.bindingOf(other).lpShareBps, lpShareBps, "as registered");
     }
 
     function test_RevertWhen_poolStatePrefixDoesNotNameTheCoin() public {
         IFactoryHook.HookConfigV2 memory config =
-            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), _config(TICK_SPACING, LP_BPS));
+            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), _config(TICK_SPACING));
         MockBCToken token = _newCoin("Foreign State", "BAD");
         PoolId poolId = _poolId(address(token));
 
-        vm.mockCall(
-            address(hook),
-            abi.encodeCall(IFactoryHook.getPoolState, (poolId)),
-            abi.encode(uint256(32), uint256(uint160(address(0xBEEF))), uint256(1), uint256(0), int256(0))
-        );
+        vm.mockCall(address(hook), abi.encodeCall(IFactoryHook.getPoolState, (poolId)), _prefix(address(0xBEEF), 1));
         vm.expectRevert(IWthCorrector.PoolStateUnavailable.selector);
         _registerCoin(token, 50, _noStaking(), HookPayload.encode(config));
 
-        vm.mockCall(
-            address(hook),
-            abi.encodeCall(IFactoryHook.getPoolState, (poolId)),
-            abi.encode(uint256(32), uint256(uint160(address(token))), uint256(0), uint256(0), int256(0))
-        );
+        vm.mockCall(address(hook), abi.encodeCall(IFactoryHook.getPoolState, (poolId)), _prefix(address(token), 0));
         vm.expectRevert(IWthCorrector.PoolStateUnavailable.selector);
         _registerCoin(token, 50, _noStaking(), HookPayload.encode(config));
         vm.clearMockedCalls();
@@ -400,8 +371,7 @@ contract WthCorrectorTest is ExtensionCampaignBase {
 
     function test_minCorrectionGas_skipsTheCall() public {
         WthCorrector greedy = new WthCorrector(address(factory), poolManager, address(weth), 1_000_000, 1);
-        (MockBCToken other,) =
-            _deployBound(address(greedy), _config(TICK_SPACING, LP_BPS), _config(TICK_SPACING, LP_BPS));
+        (MockBCToken other,) = _deployBound(address(greedy), LP_BPS);
         vm.prank(users.owner);
         greedy.setExecutor(address(executor));
         _swapEthForCoin(address(other), users.buyerTwo, USER_BUY);
@@ -594,12 +564,15 @@ contract WthCorrectorTest is ExtensionCampaignBase {
     // Payment and payout
     // ---------------------------------------------------------------------------------------------
 
-    function _assertSplit(uint256 treasuryWeth, uint256 recipientWeth, uint256 managerEth, uint256 lpAmount)
-        internal
-        view
-    {
-        assertEq(weth.balanceOf(users.treasury), treasuryWeth, "no treasury transfer");
-        assertEq(weth.balanceOf(recipient) - recipientWeth, PAYMENT - lpAmount, "recipient share");
+    function _assertSplit(
+        uint256 treasuryWeth,
+        uint256 recipientWeth,
+        uint256 managerEth,
+        uint256 protocolAmount,
+        uint256 lpAmount
+    ) internal view {
+        assertEq(weth.balanceOf(users.treasury) - treasuryWeth, protocolAmount, "protocol share");
+        assertEq(weth.balanceOf(recipient) - recipientWeth, PAYMENT - protocolAmount - lpAmount, "recipient share");
         assertEq(address(poolManager).balance - managerEth, lpAmount, "lp share donated");
         assertEq(weth.balanceOf(address(corrector)), 0, "nothing kept in weth");
         assertEq(address(corrector).balance, 0, "nothing kept in eth");
@@ -608,25 +581,25 @@ contract WthCorrectorTest is ExtensionCampaignBase {
     function test_payment_inWeth_isSplit() public {
         (uint256 t, uint256 r, uint256 m) = _baseline(USER_BUY);
         executor.setPay(WthExecutorMock.PayMode.Weth, PAYMENT);
-        uint256 lpAmount = PAYMENT * LP_BPS / 10_000;
+        (uint256 protocolAmount, uint256 lpAmount, uint256 recipientAmount) = _split(PAYMENT, LP_BPS);
 
         vm.expectEmit(true, true, false, true, address(poolManager));
         emit IPoolManager.Donate(pid, address(corrector), lpAmount, 0);
         vm.expectEmit(true, false, false, true, address(corrector));
-        emit IWthCorrector.CorrectionSettled(pid, PAYMENT, lpAmount, PAYMENT - lpAmount);
+        emit IWthCorrector.CorrectionSettled(pid, PAYMENT, protocolAmount, lpAmount, recipientAmount);
         _userBuy(USER_BUY);
-        _assertSplit(t, r, m, lpAmount);
+        _assertSplit(t, r, m, protocolAmount, lpAmount);
     }
 
     function test_payment_inNativeEth_isSplit() public {
         (uint256 t, uint256 r, uint256 m) = _baseline(USER_BUY);
         executor.setPay(WthExecutorMock.PayMode.Native, PAYMENT);
-        uint256 lpAmount = PAYMENT * LP_BPS / 10_000;
+        (uint256 protocolAmount, uint256 lpAmount,) = _split(PAYMENT, LP_BPS);
 
         vm.expectEmit(true, true, false, true, address(poolManager));
         emit IPoolManager.Donate(pid, address(corrector), lpAmount, 0);
         _userBuy(USER_BUY);
-        _assertSplit(t, r, m, lpAmount);
+        _assertSplit(t, r, m, protocolAmount, lpAmount);
     }
 
     function test_payment_none_revertsTheCorrection() public {
@@ -651,18 +624,21 @@ contract WthCorrectorTest is ExtensionCampaignBase {
         corrector.setExecutor(address(0));
         router.roundTrip(plainKey, key, coinIn);
         uint256 recipientPaused = weth.balanceOf(recipient);
+        uint256 treasuryPaused = weth.balanceOf(users.treasury);
         uint256 managerPaused = address(poolManager).balance;
         uint256 coinsPaused = wCoin.balanceOf(address(router));
         vm.revertTo(snap);
 
+        (uint256 protocolAmount,,) = _split(PAYMENT, LP_BPS);
         vm.recordLogs();
         vm.expectEmit(true, false, false, true, address(corrector));
-        emit IWthCorrector.CorrectionSettled(pid, PAYMENT, 0, PAYMENT);
+        emit IWthCorrector.CorrectionSettled(pid, PAYMENT, protocolAmount, 0, PAYMENT - protocolAmount);
         router.roundTrip(plainKey, key, coinIn);
 
         assertEq(wCoin.balanceOf(address(router)), coinsPaused, "the round trip completed as when paused");
         assertEq(_countLogs(address(poolManager), IPoolManager.Donate.selector), 0, "no donation");
-        assertEq(weth.balanceOf(recipient) - recipientPaused, PAYMENT, "the whole payment to the recipient");
+        assertEq(weth.balanceOf(users.treasury) - treasuryPaused, protocolAmount, "the protocol share stands");
+        assertEq(weth.balanceOf(recipient) - recipientPaused, PAYMENT - protocolAmount, "the rest to the recipient");
         assertEq(address(poolManager).balance, managerPaused, "nothing settled into the manager");
         assertEq(weth.balanceOf(address(corrector)) + address(corrector).balance, 0, "nothing kept");
     }
@@ -678,20 +654,20 @@ contract WthCorrectorTest is ExtensionCampaignBase {
             address(poolManager), abi.encodeWithSignature("extsload(bytes32)", liquiditySlot), abi.encode(bytes32(0))
         );
 
+        (uint256 protocolAmount,,) = _split(PAYMENT, LP_BPS);
         vm.expectEmit(true, false, false, true, address(corrector));
-        emit IWthCorrector.CorrectionSettled(pid, PAYMENT, 0, PAYMENT);
+        emit IWthCorrector.CorrectionSettled(pid, PAYMENT, protocolAmount, 0, PAYMENT - protocolAmount);
         _userBuy(USER_BUY);
         vm.clearMockedCalls();
-        _assertSplit(t, r, m, 0);
+        _assertSplit(t, r, m, protocolAmount, 0);
     }
 
     function test_payout_failedTransfer_revertsTheCorrection() public {
         uint256 coinOut = _probeBuy(USER_BUY);
         _setSellLeg(coinOut / 4, WthExecutorMock.LimitMode.BandUpperMinus, 1);
         executor.setPay(WthExecutorMock.PayMode.Weth, PAYMENT);
-        vm.mockCallRevert(
-            address(weth), abi.encodeCall(IWETH.transfer, (recipient, PAYMENT - PAYMENT * LP_BPS / 10_000)), ""
-        );
+        (,, uint256 recipientAmount) = _split(PAYMENT, LP_BPS);
+        vm.mockCallRevert(address(weth), abi.encodeCall(IWETH.transfer, (recipient, recipientAmount)), "");
         (, uint256 recipientPaused,) = _baseline(USER_BUY);
 
         vm.recordLogs();
@@ -708,18 +684,18 @@ contract WthCorrectorTest is ExtensionCampaignBase {
         (uint256 t, uint256 r, uint256 m) = _baseline(USER_BUY);
         executor.setPay(WthExecutorMock.PayMode.Native, payment);
         _userBuy(USER_BUY);
-        uint256 lpAmount = payment * LP_BPS / 10_000;
-        assertEq(weth.balanceOf(users.treasury), t, "no treasury transfer");
+        (uint256 protocolAmount, uint256 lpAmount, uint256 recipientAmount) = _split(payment, LP_BPS);
+        assertEq(weth.balanceOf(users.treasury) - t, protocolAmount, "protocol");
         assertEq(address(poolManager).balance - m, lpAmount, "donated");
-        assertEq(weth.balanceOf(recipient) - r, payment - lpAmount, "recipient");
+        assertEq(weth.balanceOf(recipient) - r, recipientAmount, "recipient");
+        assertEq(protocolAmount + lpAmount + recipientAmount, payment, "sum");
         assertEq(weth.balanceOf(address(corrector)) + address(corrector).balance, 0, "nothing kept");
     }
 
-    function testFuzz_payout_lpShareFromTheBinding(uint16 lpShareBps, uint256 payment) public {
-        lpShareBps = uint16(bound(lpShareBps, 2500, 10_000));
+    function testFuzz_payout_lpShareFromTheHook(uint16 lpShareBps, uint256 payment) public {
+        lpShareBps = uint16(bound(lpShareBps, 0, 10_000));
         payment = bound(payment, 1, 1 ether);
-        (MockBCToken c,) =
-            _deployBound(address(corrector), _config(TICK_SPACING, lpShareBps), _config(TICK_SPACING, lpShareBps));
+        (MockBCToken c,) = _deployBound(address(corrector), lpShareBps);
         address cRecipient = c.getFeeRecipient();
 
         uint256 snap = vm.snapshot();
@@ -733,11 +709,66 @@ contract WthCorrectorTest is ExtensionCampaignBase {
 
         executor.setPay(WthExecutorMock.PayMode.Native, payment);
         _swapEthForCoin(address(c), users.buyerTwo, USER_BUY);
-        uint256 lpAmount = payment * lpShareBps / 10_000;
-        assertEq(address(poolManager).balance - managerPaused, lpAmount, "donated per the binding");
-        assertEq(weth.balanceOf(cRecipient) - recipientPaused, payment - lpAmount, "the rest to the recipient");
-        assertEq(weth.balanceOf(users.treasury), treasuryPaused, "no treasury transfer");
+        (uint256 protocolAmount, uint256 lpAmount, uint256 recipientAmount) = _split(payment, lpShareBps);
+        assertEq(weth.balanceOf(users.treasury) - treasuryPaused, protocolAmount, "the protocol share first");
+        assertEq(address(poolManager).balance - managerPaused, lpAmount, "donated per the hook's share");
+        assertEq(weth.balanceOf(cRecipient) - recipientPaused, recipientAmount, "the rest to the recipient");
         assertEq(weth.balanceOf(address(corrector)) + address(corrector).balance, 0, "nothing kept");
+    }
+
+    function testFuzz_payout_protocolShareFollowsTheHookRatio(uint8 ratio, uint256 payment) public {
+        ratio = uint8(bound(ratio, 0, 100));
+        payment = bound(payment, 1, 1 ether);
+        vm.prank(users.owner);
+        hook.setProtocolFeeRatio(ratio);
+        (uint256 t, uint256 r, uint256 m) = _baseline(USER_BUY);
+
+        executor.setPay(WthExecutorMock.PayMode.Weth, payment);
+        _userBuy(USER_BUY);
+        uint256 protocolAmount = payment * ratio / 100;
+        uint256 lpAmount = (payment - protocolAmount) * LP_BPS / 10_000;
+        assertEq(weth.balanceOf(users.treasury) - t, protocolAmount, "the hook's ratio");
+        assertEq(address(poolManager).balance - m, lpAmount, "lp share of the rest");
+        assertEq(weth.balanceOf(recipient) - r, payment - protocolAmount - lpAmount, "recipient");
+        assertEq(weth.balanceOf(address(corrector)) + address(corrector).balance, 0, "nothing kept");
+    }
+
+    /// @dev The creator's LP share never dilutes the protocol share: all to the LPs leaves 25 % to Frontier.
+    function test_payout_protocolShareComesBeforeTheLpShare() public {
+        (MockBCToken c,) = _deployBound(address(corrector), 10_000);
+        address cRecipient = c.getFeeRecipient();
+        uint256 recipientBefore = weth.balanceOf(cRecipient);
+        uint256 treasuryBefore = weth.balanceOf(users.treasury);
+        uint256 managerBefore = address(poolManager).balance;
+        executor.setPay(WthExecutorMock.PayMode.Weth, PAYMENT);
+
+        uint256 snap = vm.snapshot();
+        vm.prank(users.owner);
+        corrector.setExecutor(address(0));
+        _swapEthForCoin(address(c), users.buyerTwo, USER_BUY);
+        uint256 recipientSwapFee = weth.balanceOf(cRecipient) - recipientBefore;
+        uint256 treasurySwapFee = weth.balanceOf(users.treasury) - treasuryBefore;
+        uint256 managerSwapFee = address(poolManager).balance - managerBefore;
+        vm.revertTo(snap);
+
+        _swapEthForCoin(address(c), users.buyerTwo, USER_BUY);
+        assertEq(weth.balanceOf(users.treasury) - treasuryBefore - treasurySwapFee, PAYMENT / 4, "25 % to Frontier");
+        assertEq(address(poolManager).balance - managerBefore - managerSwapFee, PAYMENT * 3 / 4, "75 % to the LPs");
+        assertEq(weth.balanceOf(cRecipient) - recipientBefore, recipientSwapFee, "nothing more to the creator");
+    }
+
+    function test_payout_zeroTreasury_paysTheProtocolShareToTheRecipient() public {
+        factory.setTreasury(address(0));
+        (uint256 t, uint256 r, uint256 m) = _baseline(USER_BUY);
+        executor.setPay(WthExecutorMock.PayMode.Weth, PAYMENT);
+        (uint256 protocolAmount, uint256 lpAmount, uint256 recipientAmount) = _split(PAYMENT, LP_BPS);
+
+        vm.expectEmit(true, false, false, true, address(corrector));
+        emit IWthCorrector.CorrectionSettled(pid, PAYMENT, protocolAmount, lpAmount, recipientAmount);
+        _userBuy(USER_BUY);
+        assertEq(weth.balanceOf(users.treasury), t, "nothing to the old treasury");
+        assertEq(address(poolManager).balance - m, lpAmount, "donated");
+        assertEq(weth.balanceOf(recipient) - r, protocolAmount + recipientAmount, "the protocol share too");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -749,7 +780,7 @@ contract WthCorrectorTest is ExtensionCampaignBase {
     /// @dev A corrector with a nonzero minimum payment, bound on a fresh coin, with its own executor.
     function _deployStrict() internal returns (WthCorrector strict, WthExecutorMock strictExecutor, MockBCToken c) {
         strict = new WthCorrector(address(factory), poolManager, address(weth), MIN_GAS, MIN_PAYMENT);
-        (c,) = _deployBound(address(strict), _config(TICK_SPACING, LP_BPS), _config(TICK_SPACING, LP_BPS));
+        (c,) = _deployBound(address(strict), LP_BPS);
         strictExecutor = new WthExecutorMock(poolManager, IWETH(address(weth)), address(strict));
         vm.prank(users.owner);
         strict.setExecutor(address(strictExecutor));
@@ -804,7 +835,7 @@ contract WthCorrectorTest is ExtensionCampaignBase {
         strictExecutor.setPay(WthExecutorMock.PayMode.Weth, MIN_PAYMENT);
 
         vm.expectEmit(true, false, false, false, address(strict));
-        emit IWthCorrector.CorrectionSettled(_poolId(address(c)), MIN_PAYMENT, 0, 0);
+        emit IWthCorrector.CorrectionSettled(_poolId(address(c)), MIN_PAYMENT, 0, 0, 0);
         _swapEthForCoin(address(c), users.buyerTwo, USER_BUY);
         assertEq(strictExecutor.rec(strictExecutor.REC_FEE()), FLOOR_FEE, "in-band leg at the floor");
         assertEq(hook.getCurrentFee(_poolId(address(c))), FLOOR_FEE, "the leg stands");

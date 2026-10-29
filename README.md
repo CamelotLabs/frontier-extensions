@@ -30,17 +30,18 @@ FOUNDRY_PROFILE=fork forge test     # live: against Robinhood Chain (in CI: the 
 
 One singleton bound on a pool **in both roles**: last fee calculator of the chain and last after-swap
 observer. After a user swap it has a partner executor close the price gap the swap opened against
-other venues, inside the same Uniswap unlock, and splits what the executor pays between the pool's
-LPs and the coin's fee recipient.
+other venues, inside the same Uniswap unlock, and splits what the executor pays the way the hook
+splits the pool's fees: the protocol ratio to the treasury, the pool's LP share of the rest to its
+LPs, the remainder to the coin's fee recipient.
 
 - **Binding.** `onRegisterCalculator` and `onRegisterObserver`, hook-gated through the kit's
-  `HookGated`, write-once per role. The config of each role is `abi.encode(int24 tickSpacing,
-  uint16 lpShareBps)`, the same for both roles: the pool key `(ETH, coin, dynamic fee, tickSpacing,
-  hook)` rebuilt from it must hash to the pool id, the hook's `getPoolState` prefix must name that
-  coin as registered, and `lpShareBps` must lie between `MIN_LP_SHARE_BPS` (2500) and 10 000. There
-  is no default: an empty or malformed config fails the deploy. List the corrector last in both
-  lists: a calculator after it could reprice the legs, an observer before it that swaps would move
-  the band.
+  `HookGated`, write-once per role. The config of each role is `abi.encode(int24 tickSpacing)`: the
+  pool key `(ETH, coin, dynamic fee, tickSpacing, hook)` rebuilt from it must hash to the pool id,
+  and the hook's `getPoolState` prefix must name that coin as registered. The binding also keeps
+  the pool's `lpShareBps`, read off the same prefix (head word 11), the share the coin creator
+  declared in the hook config. An empty or malformed config fails the deploy. List the corrector
+  last in both lists: a calculator after it could reprice the legs, an observer before it that
+  swaps would move the band.
 - **Flow.** `onAfterSwap` opens a transient window carrying the band of the user's swap (its
   post-swap price and its pre-swap tick moved one tick inside) and calls
   `executor.executeArbitrage(poolKey, address(0), ProfitSplit(this, 0, CREATOR_BPS, 0))`, with
@@ -56,18 +57,22 @@ LPs and the coin's fee recipient.
   executor or a payment under `MIN_PAYMENT_WEI` reverts the correction, which the hook swallows, and
   every leg unwinds with it. The user's swap always completes.
 - **Payout.** The corrector receives `CREATOR_BPS` (8000) of the executor's realized profit, the
-  executor's interface reserving the other 2000 bps, and takes nothing for the protocol. The payment is counted in the
-  pool's quote currency, WETH and native ETH together (`receive` accepts ETH only during a
-  correction); under `MIN_PAYMENT_WEI` the correction reverts, whatever else the executor sent. The
-  pool's `lpShareBps` of it is donated to the pool's in-range liquidity in ETH (to the fee recipient
-  instead when the pool has none, or when the swapper's router left a currency synced on the
-  PoolManager), the rest goes to the coin's `getFeeRecipient()` in WETH; the
-  coin creator sets that split at launch, LPs never under 25 %. A refused WETH transfer reverts the
-  correction. `CorrectionSettled(poolId, received, lpAmount, recipientAmount)` records every split;
-  `ExecutorSet` and `TokensRecovered` the owner's actions.
+  executor's interface reserving the other 2000 bps. The payment is counted in the pool's quote
+  currency, WETH and native ETH together (`receive` accepts ETH only during a correction); under
+  `MIN_PAYMENT_WEI` the correction reverts, whatever else the executor sent. The split copies the
+  hook's, with the protocol first: the hook's `protocolFeeRatio()` (a percentage, the factory
+  owner's lever; 25 on Robinhood Chain) of the payment goes to `BCTokenFactory.treasury()` in WETH
+  (to the fee recipient when the factory has no treasury, as in the hook); the pool's `lpShareBps`
+  of the rest is donated to the pool's in-range liquidity in ETH (to the fee recipient instead when
+  the pool has none, or when the swapper's router left a currency synced on the PoolManager); the
+  remainder goes to the coin's `getFeeRecipient()` in WETH. At the default `lpShareBps` of 7000
+  and a ratio of 25, a payment splits 25 % / 52.5 % / 22.5 %. The creator's LP share never cuts
+  the protocol share: at 10 000 the LPs take 75 % and the recipient nothing. A refused WETH
+  transfer reverts the correction. `CorrectionSettled(poolId, received, protocolAmount, lpAmount,
+  recipientAmount)` records every split; `ExecutorSet` and `TokensRecovered` the owner's actions.
 - **Gas.** The correction runs inside the hook's 600k observer budget, shared with the pool's other
   observers. With the test executor a full correction (one in-band leg through the hook, one leg on
-  a plain pool, payout with donation) costs about 292k: roughly 90k in the corrector, 103k for the
+  a plain pool, payout with donation) costs about 294k: roughly 93k in the corrector, 103k for the
   hook leg, 49k for the plain leg. `onAfterSwap` returns without calling the executor when
   `gasleft()` is under `MIN_CORRECTION_GAS`, and keeps `TAIL_RESERVE` (120k) back from the executor
   call for the snapshot check and the payout.
