@@ -35,7 +35,9 @@ import {IWthCorrector} from "./IWthCorrector.sol";
  * @notice Official correction extension: one singleton bound on a pool as its last fee calculator
  * and as an after-swap observer. After a user swap it calls the partner executor inside the same
  * unlock, prices the executor's in-band legs at the protocol floor, and splits the payment it
- * receives in WETH or native ETH between the pool's LPs and the coin's fee recipient.
+ * receives in WETH or native ETH the way the hook splits its fees: the protocol ratio to the
+ * factory treasury first, the pool's LP share of the rest to its LPs, the remainder to the coin's
+ * fee recipient.
  * @dev The band and the user's direction live in transient storage for the duration of the
  * executor call; a self-lock makes the nested notifications of the executor's own legs return at
  * once. The PoolManager delta snapshot taken around the call must be unchanged on return, else the
@@ -55,14 +57,14 @@ contract WthCorrector is IWthCorrector, HookGated {
     /// @notice Basis-point denominator.
     uint16 private constant MAX_BPS = 10_000;
 
+    /// @notice Denominator of the hook's `protocolFeeRatio`, a percentage.
+    uint8 private constant MAX_RATIO = 100;
+
     /// @notice The `creatorBps` named in the profit split handed to the executor; the split's three shares sum to it.
     uint16 public constant CREATOR_BPS = 8000;
 
-    /// @notice Lowest LP share a pool may bind, in bps.
-    uint16 public constant MIN_LP_SHARE_BPS = 2500;
-
-    /// @notice Minimum `getPoolState` returndata: the offset word plus the `PoolState` head words 0-3.
-    uint256 private constant POOL_STATE_PREFIX_BYTES = 5 * 32;
+    /// @notice Minimum `getPoolState` returndata: the offset word plus the `PoolState` head words 0-11.
+    uint256 private constant POOL_STATE_PREFIX_BYTES = 13 * 32;
 
     /// @notice Gas kept back from the executor call for the snapshot check and the payout.
     uint256 public constant TAIL_RESERVE = 120_000;
@@ -204,8 +206,8 @@ contract WthCorrector is IWthCorrector, HookGated {
     }
 
     /// @notice Binds one role on a pool: hook-gated, write-once per role, the pool key rebuilt from the
-    /// config's tick spacing must hash to `poolId`, the hook's `PoolState` prefix must name the coin,
-    /// and both roles must carry the same config.
+    /// config's tick spacing must hash to `poolId`, and the hook's `PoolState` prefix must name the coin
+    /// as registered. The LP share is the pool's own, read off the same prefix.
     function _bind(PoolId poolId, bytes calldata config, uint8 role) internal {
         address hook = hookOf[poolId];
         if (hook == address(0)) hook = address(_registerPool(poolId));
@@ -213,20 +215,18 @@ contract WthCorrector is IWthCorrector, HookGated {
 
         PoolBinding storage binding = _bindings[poolId];
         if (binding.roles & role != 0) revert RoleAlreadyBound();
-        if (config.length != 64) revert InvalidPoolConfig();
-        (int24 tickSpacing, uint16 lpShareBps) = abi.decode(config, (int24, uint16));
-        if (lpShareBps < MIN_LP_SHARE_BPS || lpShareBps > MAX_BPS) revert InvalidShares();
-        if (binding.roles != 0 && binding.lpShareBps != lpShareBps) revert InvalidPoolConfig();
+        if (config.length != 32) revert InvalidPoolConfig();
+        int24 tickSpacing = abi.decode(config, (int24));
         address coin = IExtensionHost(hook).poolCoin(poolId);
         if (coin == address(0) || PoolId.unwrap(_poolKey(coin, tickSpacing, hook).toId()) != PoolId.unwrap(poolId)) {
             revert InvalidPoolConfig();
         }
-        (uint256 coinWord, uint256 registeredWord,) = _poolStatePrefix(hook, poolId);
+        (uint256 coinWord, uint256 registeredWord,, uint256 lpShareWord) = _poolStatePrefix(hook, poolId);
         if (coinWord != uint256(uint160(coin)) || registeredWord != 1) revert PoolStateUnavailable();
 
         binding.coin = coin;
         binding.tickSpacing = tickSpacing;
-        binding.lpShareBps = lpShareBps;
+        binding.lpShareBps = uint16(lpShareWord);
         binding.roles |= role;
     }
 
@@ -292,16 +292,17 @@ contract WthCorrector is IWthCorrector, HookGated {
 
     /// @notice Reads the hook's pre-swap reference tick off the `PoolState` prefix (head word 3).
     function _referenceTick(address hook, PoolId poolId) internal view returns (int24 tick) {
-        (,, int256 word) = _poolStatePrefix(hook, poolId);
+        (,, int256 word,) = _poolStatePrefix(hook, poolId);
         tick = int24(word);
     }
 
-    /// @notice Reads the `PoolState` head words 0 (`coin`), 1 (`registered`) and 3 (`referenceTick`) raw.
+    /// @notice Reads the `PoolState` head words 0 (`coin`), 1 (`registered`), 3 (`referenceTick`) and
+    /// 11 (`lpShareBps`) raw.
     /// @dev Raw staticcall with a bounded copy: the typed decode would copy the pool's extension arrays.
     function _poolStatePrefix(address hook, PoolId poolId)
         internal
         view
-        returns (uint256 coinWord, uint256 registeredWord, int256 tickWord)
+        returns (uint256 coinWord, uint256 registeredWord, int256 tickWord, uint256 lpShareWord)
     {
         bytes memory data = abi.encodeCall(IFactoryHook.getPoolState, (poolId));
         uint256 size = POOL_STATE_PREFIX_BYTES;
@@ -313,6 +314,7 @@ contract WthCorrector is IWthCorrector, HookGated {
             coinWord := mload(add(out, 0x20))
             registeredWord := mload(add(out, 0x40))
             tickWord := mload(add(out, 0x80))
+            lpShareWord := mload(add(out, 0x180))
         }
         if (!ok) revert PoolStateUnavailable();
     }
@@ -335,15 +337,19 @@ contract WthCorrector is IWthCorrector, HookGated {
         return keccak256(abi.encode(target, currency));
     }
 
-    /// @notice Splits a payment: the pool's LP share donated to the pool in native ETH, the rest to the
-    /// coin's fee recipient in WETH.
-    /// @dev The LP share falls to the fee recipient when the pool has no in-range liquidity, since
+    /// @notice Splits a payment: the hook's protocol ratio to the factory treasury in WETH, the pool's LP
+    /// share of the rest donated to the pool in native ETH, the remainder to the coin's fee recipient in WETH.
+    /// @dev The protocol share falls to the fee recipient when the factory has no treasury, as in the
+    /// hook. The LP share falls to the fee recipient when the pool has no in-range liquidity, since
     /// `donate` reverts there, or when a currency is pending sync on the PoolManager, since a native
     /// settle reverts there.
     function _payout(PoolId poolId, PoolBinding memory binding, uint256 received, uint256 nativeHeld) internal {
         address recipient = IBCToken(binding.coin).getFeeRecipient();
+        address treasury = IBCTokenFactory(BC_TOKEN_FACTORY).treasury();
+        if (treasury == address(0)) treasury = recipient;
 
-        uint256 lpAmount = received * binding.lpShareBps / MAX_BPS;
+        uint256 protocolAmount = received * IFactoryHook(msg.sender).protocolFeeRatio() / MAX_RATIO;
+        uint256 lpAmount = (received - protocolAmount) * binding.lpShareBps / MAX_BPS;
         if (
             lpAmount != 0
                 && (POOL_MANAGER.getLiquidity(poolId) == 0
@@ -361,9 +367,10 @@ contract WthCorrector is IWthCorrector, HookGated {
         }
         if (nativeHeld != 0) IWETH(WETH).deposit{value: nativeHeld}();
 
-        uint256 recipientAmount = received - lpAmount;
+        uint256 recipientAmount = received - protocolAmount - lpAmount;
+        _pay(treasury, protocolAmount);
         _pay(recipient, recipientAmount);
-        emit CorrectionSettled(poolId, received, lpAmount, recipientAmount);
+        emit CorrectionSettled(poolId, received, protocolAmount, lpAmount, recipientAmount);
     }
 
     /// @notice Transfers WETH.
