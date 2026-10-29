@@ -43,11 +43,11 @@ contract WthCorrectorHostileTest is ExtensionCampaignBase {
     function setUp() public override {
         super.setUp();
         corrector = new WthCorrector(address(factory), poolManager, address(weth), MIN_GAS, MIN_PAYMENT);
-        (wCoin, pid) = _deployGraduated(
-            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), abi.encode(TICK_SPACING, LP_BPS))
-                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, abi.encode(TICK_SPACING, LP_BPS)),
-            false
-        );
+        IFactoryHook.HookConfigV2 memory config = HookPayload.withFee(BASE_FEE)
+            .addCalculator(address(corrector), abi.encode(TICK_SPACING))
+            .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, abi.encode(TICK_SPACING));
+        config.lpShareBps = LP_BPS;
+        (wCoin, pid) = _deployGraduated(config, false);
         key = _poolKey(address(wCoin));
 
         executor = new HostileExecutorMock(poolManager, IWETH(address(weth)), address(corrector));
@@ -249,14 +249,15 @@ contract WthCorrectorHostileTest is ExtensionCampaignBase {
 
         uint256 feeTaken = wCoin.balanceOf(users.treasury) + wCoin.balanceOf(recipient) - feeBefore;
         uint256 filled = executor.coinSold() - feeTaken;
-        assertEq(feeTaken, balance * 900 / 1e6, "non-LP fee on the whole specified amount");
+        uint256 nonLpFee = uint256(BASE_FEE) * (10_000 - LP_BPS) / 10_000;
+        assertEq(feeTaken, balance * nonLpFee / 1e6, "non-LP fee on the whole specified amount");
         assertLt(filled * 100, balance, "under 1% of it was swapped");
     }
 
     function test_windowIsPerPool() public {
         (, PoolId otherPid) = _deployGraduated(
-            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), abi.encode(TICK_SPACING, LP_BPS))
-                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, abi.encode(TICK_SPACING, LP_BPS)),
+            HookPayload.withFee(BASE_FEE).addCalculator(address(corrector), abi.encode(TICK_SPACING))
+                .addObserver(address(corrector), HookPayload.CALL_AFTER_SWAP, abi.encode(TICK_SPACING)),
             false
         );
         executor.set(HostileExecutorMock.Mode.Idle, MIN_PAYMENT);

@@ -11,8 +11,9 @@ import {IHookObserver} from "frontier/interfaces/extensions/IHookObserver.sol";
  * @title IWthCorrector
  * @notice The correction extension: bound on a pool as its last fee calculator and as an after-swap
  * observer, it has the partner executor close the price gap the user's swap opened and splits the
- * executor's payment, in WETH or native ETH, between the pool's LPs and the coin's fee recipient in
- * the shares the pool bound at launch.
+ * executor's payment, in WETH or native ETH, the way the hook splits the pool's fees: the hook's
+ * protocol ratio to the factory treasury, the pool's LP share of the rest to its LPs, the remainder
+ * to the coin's fee recipient.
  * @dev A correction runs inside the user's swap, under the hook's observer budget. The legs the
  * executor sends back through the pool are priced by `quoteFee`: a leg opposite to the user's swap,
  * exact-input, with a price limit strictly inside the band the swap opened pays the protocol floor
@@ -24,7 +25,8 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
      * @notice One pool's binding, written at registration.
      * @param coin The coin paired with native ETH.
      * @param tickSpacing The pool's tick spacing.
-     * @param lpShareBps Share of every payment donated to the pool's LPs, in bps; the rest goes to the fee recipient.
+     * @param lpShareBps The pool's LP share as the hook registered it, in bps: the share of every payment net of
+     * the protocol share donated to the pool's LPs, the rest going to the fee recipient.
      * @param roles Bitmask of the roles bound so far (`ROLE_CALCULATOR`, `ROLE_OBSERVER`).
      */
     struct PoolBinding {
@@ -53,10 +55,13 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
      * @notice A correction paid and its payment was split.
      * @param poolId The pool the user swapped on.
      * @param received The payment counted, WETH and native ETH together, in wei.
+     * @param protocolAmount The share paid to the factory treasury.
      * @param lpAmount The share donated to the pool's in-range liquidity.
      * @param recipientAmount The share paid to the coin's fee recipient.
      */
-    event CorrectionSettled(PoolId indexed poolId, uint256 received, uint256 lpAmount, uint256 recipientAmount);
+    event CorrectionSettled(
+        PoolId indexed poolId, uint256 received, uint256 protocolAmount, uint256 lpAmount, uint256 recipientAmount
+    );
 
     /// @notice Caller is not the BC token factory owner.
     error OnlyFactoryOwner();
@@ -64,14 +69,11 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
     /// @notice A zero address was supplied where one is not allowed.
     error InvalidZeroAddress();
 
-    /// @notice The LP share is not between `MIN_LP_SHARE_BPS` and 10 000 bps.
-    error InvalidShares();
-
     /// @notice `minCorrectionGas` is not above `TAIL_RESERVE`, or `minPaymentWei` is zero.
     error InvalidGates();
 
-    /// @notice The register payload is not `(int24 tickSpacing, uint16 lpShareBps)`, the resulting pool key does not
-    /// hash to the pool id, or the two roles disagree.
+    /// @notice The register payload is not `(int24 tickSpacing)`, or the resulting pool key does not hash to the
+    /// pool id.
     error InvalidPoolConfig();
 
     /// @notice The pool already bound this role.
@@ -121,12 +123,6 @@ interface IWthCorrector is IFeeCalculator, IHookObserver {
      * @return The WETH address.
      */
     function WETH() external view returns (address);
-
-    /**
-     * @notice Lowest LP share a pool may bind, in bps.
-     * @return The minimum, in bps.
-     */
-    function MIN_LP_SHARE_BPS() external view returns (uint16);
 
     /**
      * @notice The `creatorBps` named in the profit split handed to the executor: 8000 bps, the sum of the split's

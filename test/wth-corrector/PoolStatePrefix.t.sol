@@ -23,6 +23,11 @@ contract WthCorrectorHarness is WthCorrector {
     function referenceTick(address hook, PoolId poolId) external view returns (int24) {
         return _referenceTick(hook, poolId);
     }
+
+    function lpShareBps(address hook, PoolId poolId) external view returns (uint16) {
+        (,,, uint256 word) = _poolStatePrefix(hook, poolId);
+        return uint16(word);
+    }
 }
 
 /// @dev The raw `getPoolState` prefix read must agree with the typed decode on the real v1.1 hook,
@@ -66,6 +71,15 @@ contract PoolStatePrefixTest is ExtensionCampaignBase {
         int24 preTick = _tick();
         _swapEthForCoin(address(token), users.buyerOne, ethIn);
         _assertMatches(preTick);
+    }
+
+    function testFuzz_lpShareBps_matchesTypedDecode(uint16 share) public {
+        share = uint16(bound(share, 0, 10_000));
+        IFactoryHook.HookConfigV2 memory config = HookPayload.withFee(HookPayload.DEFAULT_FIXED_FEE);
+        config.lpShareBps = share;
+        (, PoolId other) = _deployGraduated(config, false);
+        assertEq(harness.lpShareBps(address(hook), other), hook.getPoolState(other).lpShareBps, "raw prefix read");
+        assertEq(harness.lpShareBps(address(hook), other), share, "as registered");
     }
 
     function test_referenceTick_matchesTypedDecode_onAnUnregisteredPool() public view {
